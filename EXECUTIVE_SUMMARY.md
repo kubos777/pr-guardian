@@ -8,7 +8,8 @@ estilo en lugar de arquitectura. Resultado: releases lentos, bugs en producción
 ## La Solución
 PR Guardian es un reviewer AI que entiende TU código, TU estilo y TU historia. 
 No es un linter genérico. Es un miembro del equipo que nunca duerme, nunca se cansa, 
-y recuerda cada fix pasado.
+y **recupera ejemplos históricos aprobados** de fixes pasados para dar contexto a cada
+comentario — sin pretender que el sistema "aprende" solo en este MVP.
 
 ## Valor Cuantificable
 - ️ 40% reducción en tiempo de review humano
@@ -17,9 +18,11 @@ y recuerda cada fix pasado.
 - 🔒 Compliance de seguridad automatizado
 
 ## Diferenciador Competitivo
-Mientras otras herramientas revisan SINTAXIS, PR Guardian revisa CONTEXTO. 
-Aprende de tus PRs aprobados, tus issues cerrados, tus convenciones implícitas. 
-Es inteligencia adaptativa, no reglas estáticas.
+Mientras otras herramientas revisan SINTAXIS, PR Guardian revisa CONTEXTO.
+Recupera ejemplos de tus PRs aprobados, tus issues cerrados, tus convenciones
+implícitas — un retrieval determinista sobre historial curado, no reglas
+estáticas genéricas. (El MVP no reentrena ni actualiza modelos: no "aprende"
+automáticamente.)
 
 ## Modelo de Uso (Post-Hackathon)
 - GitHub App instalable en 2 clicks
