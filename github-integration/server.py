@@ -1,98 +1,128 @@
-"""PR Guardian - GitHub Webhook Server"""
+"""PR Guardian - MCP Server.
 
-import hashlib
-import hmac
-import json
-import logging
-import os
+Exposes GitHub access as MCP tools so the worker never talks to
+``github_client`` directly (matches ARCHITECTURE_DIAGRAMS.md: worker ->
+MCP -> GitHub). Read-side tools go through the Context Cache (Redis, TTL);
+``get_pr_head_sha`` and ``publish_review`` intentionally bypass the cache
+since they must reflect the current, live GitHub state (requirement #14).
+
+Error shape: MCP tool exceptions do not cross the client/server boundary
+as typed Python exceptions (FastMCP wraps every tool failure in a generic
+``ToolError``, discarding the original class - verified empirically). So
+GitHub-backed tools never raise; they return an envelope
+``{"ok": True, "data": ...}`` or ``{"ok": False, "error": "transient" |
+"fatal", "message": ...}`` and ``worker/mcp_client.py`` re-hydrates that
+into ``github_client.GitHubTransientError`` / ``GitHubFatalError`` on the
+caller side, so the retry classification in requirement #12 still works
+whether GitHub was called directly or through MCP.
+"""
+
+from __future__ import annotations
+
 import sys
 from pathlib import Path
+from typing import Any, Callable
 
-from dotenv import load_dotenv
-from flask import Flask, Request, abort, jsonify, request
+_REPO_ROOT = Path(__file__).resolve().parent.parent
+for _p in (_REPO_ROOT, _REPO_ROOT / "github-integration"):
+    _s = str(_p)
+    if _s not in sys.path:
+        sys.path.insert(0, _s)
 
-from webhook_handler import handle_webhook
+from fastmcp import FastMCP
 
-# Load environment variables
-env_path = Path(__file__).resolve().parent.parent
-load_dotenv(env_path / ".env")
-load_dotenv(env_path / ".env.local", override=True)
+import github_client
+from github_client import GitHubFatalError, GitHubTransientError
+from store import context_cache, history_store
 
-# Configuration
-WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "3000"))
-LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
+mcp = FastMCP("pr-guardian-context")
 
-# Logging
-logging.basicConfig(
-    level=getattr(logging, LOG_LEVEL, logging.INFO),
-    format="%(asctime)s [%(levelname)s] %(message)s",
-)
-logger = logging.getLogger(__name__)
-
-app = Flask(__name__)
+CONFIG_FILES = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".prettierrc", "tsconfig.json"]
 
 
-def verify_signature(req: Request) -> bool:
-    """Verify the GitHub webhook signature (X-Hub-Signature-256)."""
-    signature_header = req.headers.get("X-Hub-Signature-256")
-    if not signature_header:
-        logger.warning("Missing X-Hub-Signature-256 header")
-        return False
-
-    if not WEBHOOK_SECRET:
-        logger.error("GITHUB_WEBHOOK_SECRET not configured")
-        return False
-
-    expected_signature = "sha256=" + hmac.HMAC(
-        key=WEBHOOK_SECRET.encode("utf-8"),
-        msg=req.get_data(),
-        digestmod=hashlib.sha256,
-    ).hexdigest()
-
-    return hmac.compare_digest(expected_signature, signature_header)
+def _envelope(fn: Callable[[], Any]) -> dict:
+    try:
+        return {"ok": True, "data": fn()}
+    except GitHubTransientError as exc:
+        return {"ok": False, "error": "transient", "message": str(exc)}
+    except GitHubFatalError as exc:
+        return {"ok": False, "error": "fatal", "message": str(exc)}
+    except Exception as exc:  # unexpected bug: never silently retry it
+        return {"ok": False, "error": "fatal", "message": f"unexpected error: {exc}"}
 
 
-@app.route("/webhook", methods=["POST"])
-def webhook():
-    """POST /webhook — Receive GitHub webhook events."""
-    # Verify signature
-    if not verify_signature(request):
-        logger.warning("Invalid webhook signature — rejecting request")
-        abort(401, description="Invalid signature")
+@mcp.tool
+def get_pr_files(owner: str, repo: str, pr_number: int, head_sha: str) -> dict:
+    """Fetch the PR's changed files + unified-diff patches (Context Cache, TTL)."""
 
-    # Parse event
-    event_type = request.headers.get("X-GitHub-Event", "unknown")
-    delivery_id = request.headers.get("X-GitHub-Delivery", "no-id")
-    payload = request.get_json(silent=True)
+    def _fetch():
+        cached = context_cache.get("pr_files", owner, repo, str(pr_number), head_sha)
+        if cached is not None:
+            return cached
+        files = github_client.get_pr_files(owner, repo, pr_number)
+        context_cache.set("pr_files", owner, repo, str(pr_number), head_sha, value=files)
+        return files
 
-    if payload is None:
-        logger.warning("Empty or invalid JSON payload")
-        abort(400, description="Invalid JSON payload")
-
-    logger.info(f"Received event: {event_type} (delivery: {delivery_id})")
-    logger.debug(f"Payload:\n{json.dumps(payload, indent=2)}")
-
-    # TODO: process events asynchronously in a future iteration
-    # For now, acknowledge immediately without processing
-    return jsonify({"status": "received", "event": event_type}), 200
+    return _envelope(_fetch)
 
 
-@app.route("/health", methods=["GET"])
-def health():
-    """GET /health — Basic health check."""
-    return jsonify({"status": "ok", "service": "pr-guardian-webhook"}), 200
+@mcp.tool
+def get_pr_head_sha(owner: str, repo: str, pr_number: int) -> dict:
+    """Fetch the PR's *current* head SHA. Never cached: requirement #14
+    requires this to reflect live GitHub state at publish time.
+    """
+    return _envelope(lambda: github_client.get_pr_head_sha(owner, repo, pr_number))
+
+
+@mcp.tool
+def get_repo_config(owner: str, repo: str, head_sha: str) -> dict:
+    """Fetch known style/config files at this sha (Context Cache, TTL)."""
+
+    def _fetch():
+        cached = context_cache.get("repo_config", owner, repo, head_sha)
+        if cached is not None:
+            return cached
+        config = {path: github_client.get_repo_file(owner, repo, path, head_sha) for path in CONFIG_FILES}
+        context_cache.set("repo_config", owner, repo, head_sha, value=config)
+        return config
+
+    return _envelope(_fetch)
+
+
+@mcp.tool
+def get_history_examples(repo_full_name: str, file_paths: list[str], limit: int = 5) -> list[dict]:
+    """Retrieve approved historical examples (History Store). This is a
+    retrieval, never a learning step — see store/history_store.py.
+    """
+    return history_store.get_related_examples(repo_full_name, file_paths, limit=limit)
+
+
+@mcp.tool
+def publish_review(
+    owner: str,
+    repo: str,
+    pr_number: int,
+    commit_id: str,
+    body: str,
+    comments: list[dict],
+) -> dict:
+    """Requirement #16: publish one batched review with inline comments."""
+    return _envelope(
+        lambda: github_client.post_review(
+            owner, repo, pr_number, commit_id=commit_id, body=body, comments=comments, event="COMMENT"
+        )
+    )
+
+
+@mcp.tool
+def list_reviews(owner: str, repo: str, pr_number: int) -> dict:
+    """List existing reviews on the PR (used for publish-idempotency checks)."""
+    return _envelope(lambda: github_client.list_reviews(owner, repo, pr_number))
 
 
 def start_server():
-    """Start the webhook server."""
-    if not WEBHOOK_SECRET:
-        logger.error("GITHUB_WEBHOOK_SECRET is not set. Exiting.")
-        sys.exit(1)
-
-    logger.info(f"Starting PR Guardian webhook server on {SERVER_HOST}:{SERVER_PORT}")
-    app.run(host=SERVER_HOST, port=SERVER_PORT, debug=(LOG_LEVEL == "DEBUG"))
+    """Start the MCP server over stdio (standalone / manual use)."""
+    mcp.run()
 
 
 if __name__ == "__main__":
