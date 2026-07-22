@@ -27,8 +27,8 @@ sequenceDiagram
     WH->>Agent: Process Review Request
     Agent->>LLM: Send Prompt + Context
     LLM-->>Agent: JSON Comments Array
-    Agent->>MCP: Post Inline Comments
-    MCP->>GH: POST /repos/{repo}/issues/{id}/comments
+    Agent->>MCP: Post Batched Review
+    MCP->>GH: POST /repos/{owner}/{repo}/pulls/{pull_number}/reviews
     GH-->>Dev: Notification: New Review Comments
 ```    
 
@@ -37,7 +37,8 @@ sequenceDiagram
 2.  **Webhook:** GitHub envía una notificación HTTP POST a nuestro servidor (`Webhook Handler`). Este es nuestro punto de entrada real.
 3.  **Context Fetching:** El handler no analiza nada todavía. Primero le pide al `MCP Server` que obtenga el diff del PR, las reglas de estilo (.eslintrc) y el historial reciente.
 4.  **Análisis:** Con todos los datos crudos, el `Agent Core` construye el prompt y se lo envía al LLM.
-5.  **Respuesta Estructurada:** El LLM devuelve un JSON con comentarios inline (no texto libre). Esto evita alucinaciones.
+5.   **Respuesta Estructurada:** El LLM devuelve JSON con comentarios inline (no texto libre). El JSON garantiza el formato, no la verdad: cada hallazgo se valida después contra archivo, línea, evidencia y head_sha antes de publicarse.
+
 6.  **Publicación:** El MCP toma ese JSON y crea comentarios reales en las líneas específicas del PR en GitHub.
 7.  **Notificación:** GitHub avisa al developer que hay nuevos comentarios.
 
@@ -134,7 +135,8 @@ stateDiagram-v2
 -   **Completed / Failed:** Estado terminal. En caso de fallo permanente, logueamos error detallado y notificamos al dashboard.
 
 ### Manejo de Errores (Ramas de Error)
--   **Retry Automático:** Para fallos transitorios (timeout, 5xx de GitHub). Máximo 3 intentos con backoff exponencial.
+-   **Retry por Etapa:** Cada etapa reintenta solo su propio fallo transitorio (timeout, 429, 5xx). Publicar en GitHub no reejecuta el análisis. 401/403 y fallos de validación no se reintentan. Máximo 3 intentos con backoff exponencial y jitter. GitHub no reentrega automáticamente webhooks fallidos, por lo que la idempotencia se garantiza con X-GitHub-Delivery y head_sha.
+
 -   **Fallback Manual:** Si todo falla, el dashboard permite trigger manual con contexto pre-cargado.
 -   **Graceful Degradation:** Si el LLM tarda >60s, publicamos comentario parcial: "⏳ Análisis en progreso..." y actualizamos después.
 
