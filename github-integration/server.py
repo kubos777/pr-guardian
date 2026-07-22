@@ -2,6 +2,7 @@
 
 import hashlib
 import hmac
+import json
 import logging
 import os
 import sys
@@ -71,6 +72,7 @@ def webhook():
         abort(400, description="Invalid JSON payload")
 
     logger.info(f"Received event: {event_type} (delivery: {delivery_id})")
+    logger.debug(f"Payload:\n{json.dumps(payload, indent=2)}")
 
     # Only process pull_request events
     if event_type == "pull_request":
