@@ -74,20 +74,9 @@ def webhook():
     logger.info(f"Received event: {event_type} (delivery: {delivery_id})")
     logger.debug(f"Payload:\n{json.dumps(payload, indent=2)}")
 
-    # Only process pull_request events
-    if event_type == "pull_request":
-        action = payload.get("action", "")
-        pr_number = payload.get("number", "?")
-        logger.info(f"PR #{pr_number} — action: {action}")
-
-        if action in ("opened", "synchronize", "reopened"):
-            handle_webhook(payload)
-            return jsonify({"status": "processed", "event": event_type, "action": action}), 200
-        else:
-            return jsonify({"status": "ignored", "reason": f"action '{action}' not handled"}), 200
-
-    # Acknowledge other events without processing
-    return jsonify({"status": "ignored", "reason": f"event '{event_type}' not handled"}), 200
+    # TODO: process events asynchronously in a future iteration
+    # For now, acknowledge immediately without processing
+    return jsonify({"status": "received", "event": event_type}), 200
 
 
 @app.route("/health", methods=["GET"])
