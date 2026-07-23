@@ -24,6 +24,8 @@ class Job:
     repository_id: int
     repo_full_name: str
     pr_number: int
+    pr_title: Optional[str]
+    pr_author: Optional[str]
     head_sha: str
     action: str
     status: str
@@ -67,6 +69,8 @@ def create_job(
     pr_number: int,
     head_sha: str,
     action: str,
+    pr_title: Optional[str] = None,
+    pr_author: Optional[str] = None,
 ) -> tuple[Job, bool, str]:
     """Create a job, enforcing both dedupe layers (requirements #3 and #4).
 
@@ -88,10 +92,21 @@ def create_job(
             cur = conn.execute(
                 """
                 INSERT INTO jobs
-                    (delivery_id, repository_id, repo_full_name, pr_number, head_sha, action, status)
-                VALUES (?, ?, ?, ?, ?, ?, ?)
+                    (delivery_id, repository_id, repo_full_name, pr_number, pr_title, pr_author,
+                     head_sha, action, status)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
-                (delivery_id, repository_id, repo_full_name, pr_number, head_sha, action, Stage.RECEIVED.value),
+                (
+                    delivery_id,
+                    repository_id,
+                    repo_full_name,
+                    pr_number,
+                    pr_title,
+                    pr_author,
+                    head_sha,
+                    action,
+                    Stage.RECEIVED.value,
+                ),
             )
             job_id = cur.lastrowid
             conn.execute(
@@ -114,6 +129,13 @@ def create_job(
 def get_job(job_id: int) -> Optional[Job]:
     conn = get_connection()
     row = conn.execute("SELECT * FROM jobs WHERE id = ?", (job_id,)).fetchone()
+    return Job.from_row(row) if row else None
+
+
+def get_latest_job() -> Optional[Job]:
+    """Most recently created job, for the dashboard's GET /jobs/latest."""
+    conn = get_connection()
+    row = conn.execute("SELECT * FROM jobs ORDER BY id DESC LIMIT 1").fetchone()
     return Job.from_row(row) if row else None
 
 

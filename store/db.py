@@ -27,6 +27,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     repository_id       INTEGER NOT NULL,
     repo_full_name      TEXT NOT NULL,
     pr_number           INTEGER NOT NULL,
+    pr_title            TEXT,
+    pr_author           TEXT,
     head_sha            TEXT NOT NULL,
     action              TEXT NOT NULL,
     status              TEXT NOT NULL DEFAULT 'RECEIVED',
