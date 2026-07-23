@@ -209,7 +209,61 @@ sudo systemctl daemon-reload
 sudo systemctl enable --now pr-guardian-webhook pr-guardian-worker pr-guardian-mcp
 ```
 
-#### 5. Reverse proxy con Caddy (HTTPS automático)
+#### 5. Deploy del Dashboard (Next.js)
+
+El dashboard se sirve como una app Node.js en producción desde el mismo EC2.
+
+```bash
+# Build del dashboard
+cd /home/ec2-user/pr-guardian/dashboard
+npm install
+npm run build
+```
+
+Crear servicio systemd:
+
+```bash
+sudo tee /etc/systemd/system/pr-guardian-dashboard.service << 'EOF'
+[Unit]
+Description=PR Guardian Dashboard (Next.js)
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/pr-guardian/dashboard
+Environment=NODE_ENV=production
+Environment=WEBHOOK_API_URL=http://127.0.0.1:8000
+ExecStart=/home/ec2-user/.local/share/fnm/aliases/default/bin/npm run start -- -p 3000
+Restart=always
+
+[Install]
+WantedBy=multi-user.target
+EOF
+
+sudo systemctl daemon-reload
+sudo systemctl enable --now pr-guardian-dashboard
+```
+
+El dashboard queda en `localhost:3000` y Caddy lo expone en HTTPS.
+
+**Alternativa: Deploy en AWS Amplify (zero-config)**
+
+Si prefieres no sobrecargar el EC2, puedes desplegar el dashboard gratis en AWS Amplify:
+
+```bash
+# Instalar Amplify CLI
+npm install -g @aws-amplify/cli
+
+# Desde el directorio dashboard/
+amplify init
+amplify add hosting
+amplify publish
+```
+
+Amplify te da HTTPS + CDN + deploy automático desde GitHub. Free tier: 1000 minutos de build + 15 GB transfer/mes.
+
+#### 6. Reverse proxy con Caddy (HTTPS automático)
 
 Caddy obtiene certificados SSL automáticamente vía Let's Encrypt.
 
@@ -236,7 +290,7 @@ sudo systemctl enable --now caddy
 
 > Si no tienes dominio, usa el IP público directamente con un certificado self-signed, o usa un subdominio gratis de https://freedns.afraid.org/
 
-#### 6. Configurar webhook en GitHub
+#### 7. Configurar webhook en GitHub
 
 - **Payload URL:** `https://pr-guardian.tu-dominio.com/webhook`
 - **Content type:** `application/json`
@@ -323,22 +377,28 @@ psql $DATABASE_URL -c "SELECT id, status, created_at FROM jobs ORDER BY created_
 │ EC2 t2.micro (Amazon Linux 2023)                 │
 │                                                  │
 │  Caddy (:443) ─── reverse proxy ───┐             │
-│                                    │             │
-│  ┌────────────────────┐   ┌───────▼──────────┐  │
-│  │ Webhook (:8000)    │   │ Dashboard (:3000)│  │
-│  │ FastAPI + Uvicorn  │   │ Next.js          │  │
-│  └────────┬───────────┘   └──────────────────┘  │
-│           │ enqueue                              │
-│  ┌────────▼───────────┐                         │
-│  │ Redis (:6379)      │                         │
-│  └────────┬───────────┘                         │
-│           │ consume                              │
-│  ┌────────▼───────────┐   ┌──────────────────┐  │
-│  │ Celery Worker (x2) │──▶│ MCP Server       │  │
-│  └────────────────────┘   │ (:8080, FastMCP) │  │
-│                            └────────┬─────────┘  │
-│                                     │            │
-│  ┌──────────────────────────────────▼─────────┐  │
+│       │                            │             │
+│       ├── /webhook*                │             │
+│       │   ┌────────────────────┐   │             │
+│       │   │ Webhook (:8000)    │   │             │
+│       │   │ FastAPI + Uvicorn  │   │             │
+│       │   └────────┬───────────┘   │             │
+│       │            │ enqueue       │             │
+│       │   ┌────────▼───────────┐   │             │
+│       │   │ Redis (:6379)      │   │             │
+│       │   └────────┬───────────┘   │             │
+│       │            │ consume       │             │
+│       │   ┌────────▼───────────┐   ┌──────────┐ │
+│       │   │ Celery Worker (x2) │──▶│ MCP Srv  │ │
+│       │   └────────────────────┘   │ (:8080)  │ │
+│       │                            └────┬─────┘ │
+│       └── /*                             │       │
+│           ┌──────────────────┐           │       │
+│           │ Dashboard (:3000)│           │       │
+│           │ Next.js (prod)   │           │       │
+│           └──────────────────┘           │       │
+│                                          │       │
+│  ┌───────────────────────────────────────▼────┐  │
 │  │ RDS PostgreSQL (db.t3.micro, 20GB)         │  │
 │  │ Jobs, findings, history — durable state    │  │
 │  └────────────────────────────────────────────┘  │

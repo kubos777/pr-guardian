@@ -301,6 +301,8 @@ uv run celery -A worker.celery_app events
 ┌─────────────────────────────────────────────────────────┐
 │ Tu máquina                                              │
 │                                                         │
+│  :3000 Dashboard (Next.js)                              │
+│    ↓ fetch /api → proxy al backend                      │
 │  :8000 Webhook Handler (FastAPI/Uvicorn)                │
 │    ↓ encola job                                         │
 │  Redis (:6379)                                          │
@@ -310,19 +312,82 @@ uv run celery -A worker.celery_app events
 │  :8080 MCP Server (FastMCP)                             │
 │    ↓ GitHub API                                         │
 │  ────────────── internet ──────────────                 │
-│  GitHub API + Groq/Gemini API                        │
+│  GitHub API + Groq/Gemini API                           │
 └─────────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## Dashboard (opcional por ahora)
+## Dashboard (Next.js)
+
+### Instalación
 
 ```bash
 cd dashboard
 npm install
-npm run dev
-# → http://localhost:3000
 ```
 
-> ⚠️ El dashboard aún no está conectado al backend. Es placeholder para la demo.
+### Ejecución en desarrollo
+
+```bash
+npm run dev
+```
+
+Abre http://localhost:3000. Hot-reload incluido.
+
+### Build de producción (para verificar antes de deploy)
+
+```bash
+npm run build
+npm run start
+```
+
+### Estructura del dashboard
+
+```
+dashboard/
+├── app/
+│   ├── page.tsx              # Página principal (análisis de PRs)
+│   ├── layout.tsx            # Layout con ThemeProvider
+│   ├── globals.css           # Tema dark/light + variables shadcn
+│   └── api/status/route.ts   # Endpoint dummy (futuro: conectar a backend)
+├── components/
+│   ├── PRCard.tsx            # Card de PR con status badge
+│   ├── CommentPreview.tsx    # Preview de finding con severity
+│   ├── ThemeProvider.tsx     # Dark/light mode provider
+│   ├── ThemeToggle.tsx       # Botón toggle de tema
+│   └── ui/                   # Componentes shadcn (button, card, badge)
+├── next.config.ts
+├── tailwind.config.ts
+└── package.json
+```
+
+### Stack del dashboard
+
+| Tecnología | Versión | Uso |
+|-----------|---------|-----|
+| Next.js | 16 | Framework React con App Router |
+| Tailwind CSS | v4 | Estilos utility-first |
+| shadcn/ui | Latest | Componentes base (Button, Card, Badge) |
+| Lucide React | Latest | Iconos |
+| next-themes | Latest | Dark/light mode |
+
+### Conectar al backend (próximo paso)
+
+El endpoint `/api/status` actualmente devuelve datos dummy. Para conectar al backend real, reemplazar con:
+
+```typescript
+// app/api/status/route.ts
+export async function GET() {
+  const res = await fetch(`${process.env.WEBHOOK_API_URL}/jobs/latest`);
+  const data = await res.json();
+  return NextResponse.json(data);
+}
+```
+
+Variables de entorno del dashboard (crear `dashboard/.env.local`):
+
+```env
+WEBHOOK_API_URL=http://localhost:8000
+```
+
