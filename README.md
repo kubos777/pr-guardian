@@ -54,7 +54,7 @@ graph LR
     end
 
     subgraph "External"
-        LLM[LLM API<br/>Claude]
+        LLM[LLM API<br/>Groq / Gemini]
         DASH[Dashboard<br/>Next.js]
     end
 
@@ -136,7 +136,7 @@ pr-guardian/
 | History Store | SQLite (`history_examples`) | Ejemplos históricos aprobados que se **recuperan**, no se aprenden automáticamente en el MVP |
 | Agent Core | Python (sin estado) | Construye prompts, llama al LLM, valida y normaliza hallazgos — no conoce Celery ni GitHub |
 | MCP Server | Python (FastMCP) | Protocolo estándar para exponer el acceso a GitHub como herramientas desacopladas |
-| LLM | Claude | Structured output (JSON), baja alucinación con temperature=0.2 |
+| LLM | Groq (Llama 3.3 70B) + Gemini Flash | Free tier, 800+ tok/s, JSON mode, fallback automático vía LiteLLM |
 | Dashboard | Next.js 14 + Tailwind | SSR para status real-time, deploy instantáneo en Vercel |
 
 > **Nota de arquitectura:** la orquestación con estado y reintentos que originalmente se planteó como un grafo en proceso (LangGraph) ahora vive en Celery — es durable entre reinicios y permite reintentar una sola etapa sin repetir las anteriores. `agent-core` quedó como una biblioteca de análisis sin estado a propósito.
@@ -163,7 +163,7 @@ El agente detecta 5 categorías de issues críticos en repos TypeScript/Node.js:
 - Node.js 20+
 - **Redis** corriendo localmente (broker de Celery + Context Cache) — `redis-server`, Docker, o cualquier instancia accesible por `REDIS_URL`
 - Cuenta GitHub con permisos de webhook
-- API key de un LLM (Claude o compatible)
+- API key de Groq (gratis) y/o Gemini (gratis)
 
 ### Instalación
 
@@ -199,9 +199,11 @@ cp .env.example .env
 GITHUB_WEBHOOK_SECRET=your_webhook_secret
 GITHUB_TOKEN=ghp_your_personal_access_token
 
-# LLM
-LLM_API_KEY=your_anthropic_api_key
-LLM_MODEL=claude-sonnet-4-20250514
+# LLM (Groq primary + Gemini fallback)
+GROQ_API_KEY=gsk_your_groq_api_key
+GEMINI_API_KEY=AIzaSy_your_gemini_key
+LLM_MODEL=groq/llama-3.3-70b-versatile
+LLM_FALLBACK_MODEL=gemini/gemini-2.0-flash
 LLM_TEMPERATURE=0.2
 
 # Queue / Broker + Context Cache
