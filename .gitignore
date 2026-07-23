@@ -72,3 +72,10 @@ pnpm-debug.log*
 *.local
 .cache/
 tmp/
+
+# ========================
+# Local data (SQLite Job Store)
+# ========================
+data/*.db
+data/*.db-shm
+data/*.db-wal

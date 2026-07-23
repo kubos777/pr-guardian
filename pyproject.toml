@@ -1,0 +1,37 @@
+[project]
+name = "pr-guardian"
+version = "0.1.0"
+description = "AI-powered autonomous PR code reviewer"
+readme = "README.md"
+license = "MIT"
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi==0.139.2",
+    "uvicorn[standard]==0.51.0",
+    "celery[redis]==5.6.3",
+    "pydantic==2.13.4",
+    "httpx==0.28.1",
+    "fastmcp==3.4.4",
+    "litellm>=1.40.0",
+    "python-dotenv>=1.1.1",
+    "sqlalchemy>=2.0",
+    "psycopg2-binary>=2.9",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=5.0",
+    "ruff>=0.5.0",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "W"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = [".", "agent-core", "github-integration"]
