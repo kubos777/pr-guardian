@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import hmac
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -31,8 +32,6 @@ from store.stages import Stage
 ALLOWED_ACTIONS = {"opened", "synchronize"}
 
 app = FastAPI(title="PR Guardian Webhook Handler")
-
-import logging
 
 logger = logging.getLogger(__name__)
 
