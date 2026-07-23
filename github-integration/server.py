@@ -15,13 +15,12 @@ from webhook_handler import handle_webhook
 
 # Load environment variables
 env_path = Path(__file__).resolve().parent.parent
-load_dotenv(env_path / ".env")
-load_dotenv(env_path / ".env.local", override=True)
+load_dotenv(env_path / ".env.local")
 
 # Configuration
 WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
-SERVER_PORT = int(os.environ.get("SERVER_PORT", "3000"))
+SERVER_PORT = int(os.environ.get("SERVER_PORT", "8080"))
 LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 
 # Logging
@@ -74,8 +73,12 @@ def webhook():
     logger.info(f"Received event: {event_type} (delivery: {delivery_id})")
     logger.debug(f"Payload:\n{json.dumps(payload, indent=2)}")
 
-    # TODO: process events asynchronously in a future iteration
-    # For now, acknowledge immediately without processing
+    # Route pull_request events to the handler
+    if event_type == "pull_request":
+        action = payload.get("action", "")
+        if action in ("opened", "synchronize", "reopened"):
+            handle_webhook(payload)
+
     return jsonify({"status": "received", "event": event_type}), 200
 
 

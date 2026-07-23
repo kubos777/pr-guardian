@@ -12,11 +12,10 @@ from dotenv import load_dotenv
 
 # Load secrets
 env_path = Path(__file__).resolve().parent.parent
-load_dotenv(env_path / ".env")
-load_dotenv(env_path / ".env.local", override=True)
+load_dotenv(env_path / ".env.local")
 
 WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
-SERVER_URL = "http://localhost:3000/webhook"
+SERVER_URL = "http://localhost:8080/webhook"
 
 # Mock payload: pull_request.opened
 payload = {
