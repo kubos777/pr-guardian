@@ -32,6 +32,10 @@ ALLOWED_ACTIONS = {"opened", "synchronize"}
 
 app = FastAPI(title="PR Guardian Webhook Handler")
 
+import logging
+
+logger = logging.getLogger(__name__)
+
 
 @app.on_event("startup")
 def _startup() -> None:

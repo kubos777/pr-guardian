@@ -30,12 +30,20 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "github-integration"):
         sys.path.insert(0, _s)
 
 from fastmcp import FastMCP
-
 import github_client
 from github_client import GitHubFatalError, GitHubTransientError
 from store import context_cache, history_store
 
 mcp = FastMCP("pr-guardian-context")
+# Load environment variables
+env_path = Path(__file__).resolve().parent.parent
+load_dotenv(env_path / ".env.local")
+
+# Configuration
+WEBHOOK_SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
+SERVER_HOST = os.environ.get("SERVER_HOST", "0.0.0.0")
+SERVER_PORT = int(os.environ.get("SERVER_PORT", "8080"))
+LOG_LEVEL = os.environ.get("LOG_LEVEL", "info").upper()
 
 CONFIG_FILES = [".eslintrc", ".eslintrc.json", ".eslintrc.js", ".prettierrc", "tsconfig.json"]
 
