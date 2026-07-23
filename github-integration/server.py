@@ -30,7 +30,6 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "github-integration"):
         sys.path.insert(0, _s)
 
 from fastmcp import FastMCP
-
 import github_client
 from github_client import GitHubFatalError, GitHubTransientError
 from store import context_cache, history_store
