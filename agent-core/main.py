@@ -20,12 +20,12 @@ import json
 import os
 from typing import Type, TypeVar
 
-import anthropic
 from pydantic import BaseModel, ValidationError
 
 from diff_utils import DiffIndex, build_diff_text
-from exceptions import LLMFatalError, LLMTransientError
+from exceptions import LLMTransientError
 from fingerprint import finding_fingerprint
+from llm_client import call_llm
 from prompt_loader import load_prompt
 from schemas import (
     Finding,
@@ -57,39 +57,6 @@ def wrap_untrusted(content: str) -> str:
 
 def _system_prompt(role_prompt_file: str) -> str:
     return f"{load_prompt(role_prompt_file)}\n\n---\n\n{UNTRUSTED_DATA_NOTICE}"
-
-
-def _client() -> anthropic.Anthropic:
-    api_key = os.environ.get("LLM_API_KEY")
-    if not api_key:
-        raise LLMFatalError("LLM_API_KEY is not configured")
-    return anthropic.Anthropic(api_key=api_key)
-
-
-def call_llm(system_prompt: str, user_content: str, temperature: float) -> str:
-    """Call the LLM and return raw text. Classifies failures per
-    requirement #12: timeout/429/5xx are transient (retryable), auth
-    failures are fatal (not retryable).
-    """
-    model = os.environ.get("LLM_MODEL", "claude-sonnet-4-20250514")
-    try:
-        response = _client().messages.create(
-            model=model,
-            max_tokens=4096,
-            temperature=temperature,
-            system=system_prompt,
-            messages=[{"role": "user", "content": user_content}],
-        )
-    except (anthropic.APITimeoutError, anthropic.RateLimitError, anthropic.InternalServerError) as exc:
-        raise LLMTransientError(f"transient LLM error: {exc}") from exc
-    except (anthropic.AuthenticationError, anthropic.PermissionDeniedError) as exc:
-        raise LLMFatalError(f"fatal LLM auth error: {exc}") from exc
-    except anthropic.APIStatusError as exc:
-        if exc.status_code >= 500 or exc.status_code == 429:
-            raise LLMTransientError(f"transient LLM status {exc.status_code}: {exc}") from exc
-        raise LLMFatalError(f"fatal LLM status {exc.status_code}: {exc}") from exc
-
-    return "".join(block.text for block in response.content if getattr(block, "type", None) == "text")
 
 
 def parse_structured(text: str, model_cls: Type[T]) -> T:
