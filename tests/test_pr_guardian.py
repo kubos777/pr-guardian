@@ -207,6 +207,28 @@ class JobStoreDedupTests(unittest.TestCase):
         statuses = [e["to_status"] for e in events]
         self.assertEqual(statuses, [Stage.RECEIVED.value, Stage.QUEUED.value])
 
+    def test_get_latest_job_returns_none_when_empty(self):
+        self.assertIsNone(job_store.get_latest_job())
+
+    def test_get_latest_job_returns_most_recently_created(self):
+        job_store.create_job(
+            delivery_id="d1", repository_id=1, repo_full_name="acme/widgets", pr_number=42, head_sha="sha1", action="opened"
+        )
+        job2, _, _ = job_store.create_job(
+            delivery_id="d2",
+            repository_id=1,
+            repo_full_name="acme/widgets",
+            pr_number=43,
+            head_sha="sha2",
+            action="opened",
+            pr_title="feat: add thing",
+            pr_author="octocat",
+        )
+        latest = job_store.get_latest_job()
+        self.assertEqual(latest.id, job2.id)
+        self.assertEqual(latest.pr_title, "feat: add thing")
+        self.assertEqual(latest.pr_author, "octocat")
+
 
 class PipelineIntegrationTests(unittest.TestCase):
     """End-to-end worker pipeline, everything external mocked."""
@@ -378,14 +400,20 @@ class WebhookEndpointTests(unittest.TestCase):
 
         return "sha256=" + hmac.new(self.secret.encode(), body, hashlib.sha256).hexdigest()
 
-    def _payload(self, action="opened", pr_number=42, head_sha="sha1", repo_id=1):
+    def _payload(self, action="opened", pr_number=42, head_sha="sha1", repo_id=1, title=None, author=None):
         import json as _json
+
+        pull_request = {"number": pr_number, "head": {"sha": head_sha}}
+        if title is not None:
+            pull_request["title"] = title
+        if author is not None:
+            pull_request["user"] = {"login": author}
 
         body = _json.dumps(
             {
                 "action": action,
                 "repository": {"id": repo_id, "full_name": "acme/widgets"},
-                "pull_request": {"number": pr_number, "head": {"sha": head_sha}},
+                "pull_request": pull_request,
             }
         ).encode()
         return body
@@ -453,6 +481,51 @@ class WebhookEndpointTests(unittest.TestCase):
         self.assertEqual(resp2.json()["dedup"], "duplicate_delivery")
         self.assertEqual(resp1.json()["job_id"], resp2.json()["job_id"])
         self.enqueue_mock.assert_called_once()
+
+    def test_jobs_latest_returns_empty_state_when_no_jobs(self):
+        resp = self.client.get("/jobs/latest")
+        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.json(), {"job": None, "findings": []})
+
+    def test_jobs_latest_returns_most_recent_job_with_title_author_and_findings(self):
+        body = self._payload(title="feat: add signup validation", author="dev-junior")
+        resp = self.client.post(
+            "/webhook",
+            content=body,
+            headers={
+                "X-Hub-Signature-256": self._sign(body),
+                "X-GitHub-Event": "pull_request",
+                "X-GitHub-Delivery": "delivery-1",
+                "Content-Type": "application/json",
+            },
+        )
+        job_id = resp.json()["job_id"]
+        job_store.save_findings(
+            job_id,
+            [
+                {
+                    "rule_id": "secret_exposure",
+                    "severity": "high",
+                    "confidence": 0.9,
+                    "path": "src/config/secrets.ts",
+                    "line": 3,
+                    "side": "RIGHT",
+                    "message": "Hardcoded API key",
+                    "suggestion": "Use process.env.API_KEY",
+                    "fingerprint": "fp1",
+                }
+            ],
+        )
+
+        latest = self.client.get("/jobs/latest")
+        self.assertEqual(latest.status_code, 200)
+        data = latest.json()
+        self.assertEqual(data["job"]["id"], job_id)
+        self.assertEqual(data["job"]["pr_title"], "feat: add signup validation")
+        self.assertEqual(data["job"]["pr_author"], "dev-junior")
+        self.assertEqual(data["job"]["status"], Stage.QUEUED.value)
+        self.assertEqual(len(data["findings"]), 1)
+        self.assertEqual(data["findings"][0]["rule_id"], "secret_exposure")
 
 
 if __name__ == "__main__":
