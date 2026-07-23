@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   redis:
     image: redis:7-alpine
@@ -31,7 +29,7 @@ services:
 
   webhook:
     build: .
-    command: uvicorn github_integration.webhook_handler:app --host 0.0.0.0 --port 8000 --reload
+    command: uvicorn webhook_handler:app --host 0.0.0.0 --port 8000 --reload --app-dir github-integration
     ports:
       - "8000:8000"
     env_file: .env
@@ -46,6 +44,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+      - /app/.venv
 
   worker:
     build: .
@@ -62,6 +61,7 @@ services:
         condition: service_healthy
     volumes:
       - .:/app
+      - /app/.venv
 
   mcp:
     build: .

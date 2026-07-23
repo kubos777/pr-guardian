@@ -17,3 +17,4 @@ RUN mkdir -p /app/data
 
 ENV PYTHONPATH="/app:/app/agent-core:/app/github-integration"
 ENV PYTHONUNBUFFERED=1
+ENV PATH="/app/.venv/bin:$PATH"
