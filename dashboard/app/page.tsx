@@ -1,11 +1,11 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { PRCard, PRStatus } from "@/components/PRCard";
 import { CommentPreview, Severity } from "@/components/CommentPreview";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Shield, Scan, Activity } from "lucide-react";
+import { Shield, Activity, AlertTriangle, Inbox, RefreshCw } from "lucide-react";
 
 interface Finding {
   file: string;
@@ -37,25 +37,56 @@ interface AnalysisResult {
   };
 }
 
+type StatusResponse =
+  | { state: "ok"; data: AnalysisResult }
+  | { state: "empty" }
+  | { state: "error"; message: string };
+
+const POLL_INTERVAL_MS = 5000;
+
 export default function Home() {
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [status, setStatus] = useState<StatusResponse | null>(null);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
-  const handleAnalyze = async () => {
-    setLoading(true);
-    setResult(null);
-
+  const fetchStatus = useCallback(async () => {
     try {
-      const res = await fetch("/api/status");
-      const data: AnalysisResult = await res.json();
-      await new Promise((resolve) => setTimeout(resolve, 1800));
-      setResult(data);
-    } catch (error) {
-      console.error("Failed to fetch analysis:", error);
+      const res = await fetch("/api/status", { cache: "no-store" });
+      const data: StatusResponse = await res.json();
+      setStatus(data);
+    } catch {
+      setStatus({ state: "error", message: "No se pudo contactar al dashboard." });
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
+
+  // Initial load, then poll every 5s only while the latest job is still
+  // being analyzed — no point polling a completed/failed/empty result.
+  useEffect(() => {
+    fetchStatus();
+  }, [fetchStatus]);
+
+  useEffect(() => {
+    const isAnalyzing = status?.state === "ok" && status.data.pr.status === "analyzing";
+
+    if (isAnalyzing && pollRef.current === null) {
+      pollRef.current = setInterval(fetchStatus, POLL_INTERVAL_MS);
+    }
+    if (!isAnalyzing && pollRef.current !== null) {
+      clearInterval(pollRef.current);
+      pollRef.current = null;
+    }
+
+    return () => {
+      if (pollRef.current !== null) {
+        clearInterval(pollRef.current);
+        pollRef.current = null;
+      }
+    };
+  }, [status, fetchStatus]);
+
+  const result = status?.state === "ok" ? status.data : null;
 
   return (
     <main className="min-h-screen bg-background">
@@ -77,46 +108,56 @@ export default function Home() {
 
       {/* Content */}
       <div className="container mx-auto px-6 py-10 max-w-2xl">
-        {/* Hero */}
-        {!result && !loading && (
-          <div className="flex flex-col items-center text-center gap-6 py-16">
-            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Scan className="h-8 w-8 text-primary" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight">
-                Code Review con IA
-              </h2>
-              <p className="text-muted-foreground text-sm max-w-md">
-                Detecta vulnerabilidades, bugs y problemas de estilo en
-                segundos. 3 pases especializados: security · style · history.
-              </p>
-            </div>
-            <Button onClick={handleAnalyze} size="lg" className="gap-2 mt-2">
-              <Scan className="h-4 w-4" />
-              Analizar PR Actual
-            </Button>
-          </div>
-        )}
-
-        {/* Loading */}
+        {/* Initial load */}
         {loading && (
           <div className="flex flex-col items-center gap-4 py-20">
             <div className="relative">
               <div className="h-12 w-12 rounded-full border-2 border-muted" />
               <div className="absolute inset-0 h-12 w-12 rounded-full border-2 border-t-primary animate-spin" />
             </div>
-            <div className="text-center space-y-1">
-              <p className="text-sm font-medium">Analizando PR...</p>
-              <p className="text-xs text-muted-foreground">
-                security · style · history
+            <p className="text-sm text-muted-foreground">Conectando con el backend...</p>
+          </div>
+        )}
+
+        {/* Backend unreachable */}
+        {!loading && status?.state === "error" && (
+          <div className="flex flex-col items-center text-center gap-4 py-16">
+            <div className="h-16 w-16 rounded-2xl bg-destructive/10 flex items-center justify-center">
+              <AlertTriangle className="h-8 w-8 text-destructive" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-xl font-bold tracking-tight">Backend no disponible</h2>
+              <p className="text-muted-foreground text-sm max-w-md">{status.message}</p>
+            </div>
+            <Button onClick={fetchStatus} variant="outline" size="sm" className="gap-2 mt-2">
+              <RefreshCw className="h-3.5 w-3.5" />
+              Reintentar
+            </Button>
+          </div>
+        )}
+
+        {/* No jobs yet */}
+        {!loading && status?.state === "empty" && (
+          <div className="flex flex-col items-center text-center gap-6 py-16">
+            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
+              <Inbox className="h-8 w-8 text-primary" />
+            </div>
+            <div className="space-y-2">
+              <h2 className="text-2xl font-bold tracking-tight">Sin PRs analizados todavía</h2>
+              <p className="text-muted-foreground text-sm max-w-md">
+                Abre o actualiza un Pull Request en un repo con el webhook configurado — en
+                cuanto llegue, aparecerá aquí con sus findings en vivo.
               </p>
             </div>
+            <Button onClick={fetchStatus} variant="outline" size="sm" className="gap-2 mt-2">
+              <RefreshCw className="h-3.5 w-3.5" />
+              Actualizar
+            </Button>
           </div>
         )}
 
         {/* Results */}
-        {result && (
+        {!loading && result && (
           <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
             {/* PR Info */}
             <PRCard
@@ -158,7 +199,20 @@ export default function Home() {
                 <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
                   Findings
                 </h2>
+                {result.pr.status === "analyzing" && (
+                  <span className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                    <span className="h-1.5 w-1.5 rounded-full bg-yellow-400 animate-pulse" />
+                    actualizando en vivo
+                  </span>
+                )}
               </div>
+              {result.findings.length === 0 && (
+                <p className="text-sm text-muted-foreground py-4 text-center">
+                  {result.pr.status === "analyzing"
+                    ? "Analizando... los findings aparecerán aquí a medida que se validen."
+                    : "No se encontraron issues en esta revisión."}
+                </p>
+              )}
               {result.findings.map((finding, idx) => (
                 <CommentPreview
                   key={idx}
@@ -172,16 +226,16 @@ export default function Home() {
               ))}
             </div>
 
-            {/* Analyze Again */}
+            {/* Manual refresh */}
             <div className="flex justify-center pt-4">
               <Button
-                onClick={handleAnalyze}
+                onClick={fetchStatus}
                 variant="outline"
                 size="sm"
                 className="gap-2"
               >
-                <Scan className="h-3.5 w-3.5" />
-                Analizar otro PR
+                <RefreshCw className="h-3.5 w-3.5" />
+                Actualizar
               </Button>
             </div>
           </div>

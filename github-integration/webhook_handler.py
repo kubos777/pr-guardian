@@ -103,6 +103,8 @@ async def webhook(request: Request) -> JSONResponse:
         repository_id=repository["id"],
         repo_full_name=repository["full_name"],
         pr_number=pull_request["number"],
+        pr_title=pull_request.get("title"),
+        pr_author=(pull_request.get("user") or {}).get("login"),
         head_sha=pull_request["head"]["sha"],
         action=action,
     )
@@ -115,6 +117,35 @@ async def webhook(request: Request) -> JSONResponse:
     return JSONResponse(
         status_code=202,
         content={"job_id": job.id, "status": job.status, "dedup": reason},
+    )
+
+
+@app.get("/jobs/latest")
+async def latest_job() -> JSONResponse:
+    """Dashboard read model: the most recently received job plus whatever
+    findings have been validated for it so far. ``job`` is null when no
+    webhook delivery has ever created a job (fresh install / empty DB).
+    """
+    job = job_store.get_latest_job()
+    if job is None:
+        return JSONResponse(status_code=200, content={"job": None, "findings": []})
+
+    findings = job_store.get_findings(job.id)
+    return JSONResponse(
+        status_code=200,
+        content={
+            "job": {
+                "id": job.id,
+                "repo_full_name": job.repo_full_name,
+                "pr_number": job.pr_number,
+                "pr_title": job.pr_title,
+                "pr_author": job.pr_author,
+                "status": job.status,
+                "error": job.error,
+                "updated_at": job.updated_at,
+            },
+            "findings": findings,
+        },
     )
 
 
