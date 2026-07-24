@@ -1,5 +1,7 @@
 # 🛡️ PR Guardian
 
+[![CI](https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml)
+
 > Agente AI autónomo para code review inteligente de Pull Requests en GitHub.
 
 PR Guardian no es un linter genérico. Es un reviewer que entiende **tu código**, **tu estilo** y **tu historial**. Analiza contexto real del repositorio, detecta patrones críticos y publica comentarios inline directamente en el PR — todo en menos de 30 segundos.
