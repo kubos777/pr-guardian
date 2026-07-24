@@ -1,4 +1,4 @@
-"""History Store — approved historical examples (SQLite, ``history_examples``).
+"""History Store — approved historical examples (SQLAlchemy, ``history_examples``).
 
 Important: the MVP does **not** learn. Nothing in this module writes a row
 automatically as a side effect of a review. Rows are added deliberately
@@ -11,7 +11,25 @@ examples", never as the agent "learning".
 
 from __future__ import annotations
 
-from store.db import get_connection
+from sqlalchemy import select
+
+from store import db
+from store.db import HistoryExample
+
+
+def _to_dict(row: HistoryExample) -> dict:
+    return {
+        "id": row.id,
+        "repo_full_name": row.repo_full_name,
+        "pr_number": row.pr_number,
+        "rule_id": row.rule_id,
+        "file_path": row.file_path,
+        "line": row.line,
+        "code_snippet": row.code_snippet,
+        "fix_description": row.fix_description,
+        "approved_by": row.approved_by,
+        "created_at": row.created_at,
+    }
 
 
 def add_approved_example(
@@ -25,17 +43,20 @@ def add_approved_example(
     approved_by: str,
     pr_number: int | None = None,
 ) -> int:
-    conn = get_connection()
-    with conn:
-        cur = conn.execute(
-            """
-            INSERT INTO history_examples
-                (repo_full_name, pr_number, rule_id, file_path, line, code_snippet, fix_description, approved_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (repo_full_name, pr_number, rule_id, file_path, line, code_snippet, fix_description, approved_by),
+    with db.session() as s:
+        row = HistoryExample(
+            repo_full_name=repo_full_name,
+            pr_number=pr_number,
+            rule_id=rule_id,
+            file_path=file_path,
+            line=line,
+            code_snippet=code_snippet,
+            fix_description=fix_description,
+            approved_by=approved_by,
         )
-    return cur.lastrowid
+        s.add(row)
+        s.commit()
+        return row.id
 
 
 def get_related_examples(repo_full_name: str, file_paths: list[str], limit: int = 5) -> list[dict]:
@@ -43,22 +64,10 @@ def get_related_examples(repo_full_name: str, file_paths: list[str], limit: int 
 
     Retrieval only — this never mutates state and is not a learning step.
     """
-    conn = get_connection()
-    if not file_paths:
-        rows = conn.execute(
-            "SELECT * FROM history_examples WHERE repo_full_name = ? ORDER BY created_at DESC LIMIT ?",
-            (repo_full_name, limit),
-        ).fetchall()
-        return [dict(r) for r in rows]
-
-    placeholders = ",".join("?" for _ in file_paths)
-    rows = conn.execute(
-        f"""
-        SELECT * FROM history_examples
-        WHERE repo_full_name = ? AND file_path IN ({placeholders})
-        ORDER BY created_at DESC
-        LIMIT ?
-        """,
-        (repo_full_name, *file_paths, limit),
-    ).fetchall()
-    return [dict(r) for r in rows]
+    with db.session() as s:
+        stmt = select(HistoryExample).where(HistoryExample.repo_full_name == repo_full_name)
+        if file_paths:
+            stmt = stmt.where(HistoryExample.file_path.in_(file_paths))
+        stmt = stmt.order_by(HistoryExample.created_at.desc()).limit(limit)
+        rows = s.scalars(stmt).all()
+        return [_to_dict(r) for r in rows]

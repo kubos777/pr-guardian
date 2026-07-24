@@ -1,134 +1,211 @@
-"""SQLite Job Store connection + schema.
+"""Job Store persistence via SQLAlchemy (Postgres in prod, SQLite for tests).
 
-A single file (``data/pr_guardian.db``, path from ``PR_GUARDIAN_DB_PATH``)
-holds four tables: ``jobs``, ``job_events``, ``findings`` and
-``history_examples``. WAL mode is enabled so the webhook process and the
-Celery worker process can read/write concurrently without locking each
-other out — that's why ``data/*.db-wal`` and ``data/*.db-shm`` exist next
-to the main file and are gitignored alongside it.
+The database is selected by ``DATABASE_URL``:
+- Docker/production: ``postgresql://user:pass@host:5432/pr_guardian``
+- Local dev (no DATABASE_URL): falls back to a SQLite file from
+  ``PR_GUARDIAN_DB_PATH`` (default ``data/pr_guardian.db``).
+- Tests: ``sqlite://`` (in-memory) via a StaticPool so the webhook thread
+  and the eager Celery task share the same connection.
+
+Four tables — ``jobs``, ``job_events``, ``findings``, ``history_examples`` —
+are declared as ORM models. ``job_store``/``history_store`` convert these
+ORM rows back into the plain dataclass / dict shapes the rest of the code
+already expects, so the migration is invisible to the webhook handler and
+the Celery worker.
 """
 
 from __future__ import annotations
 
 import os
-import sqlite3
-import threading
+from datetime import datetime, timezone
 from pathlib import Path
+
+from sqlalchemy import (
+    Column,
+    Float,
+    Index,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    event,
+    text,
+)
+from sqlalchemy.orm import Session, declarative_base, sessionmaker
+from sqlalchemy.pool import StaticPool
 
 _DB_PATH_ENV = "PR_GUARDIAN_DB_PATH"
 _DEFAULT_DB_PATH = "data/pr_guardian.db"
 
-_local = threading.local()
+Base = declarative_base()
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS jobs (
-    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
-    delivery_id         TEXT NOT NULL UNIQUE,
-    repository_id       INTEGER NOT NULL,
-    repo_full_name      TEXT NOT NULL,
-    pr_number           INTEGER NOT NULL,
-    pr_title            TEXT,
-    pr_author           TEXT,
-    head_sha            TEXT NOT NULL,
-    action              TEXT NOT NULL,
-    status              TEXT NOT NULL DEFAULT 'RECEIVED',
-    attempt_counts      TEXT NOT NULL DEFAULT '{}',
-    github_review_id    INTEGER,
-    fingerprint_set_hash TEXT,
-    error               TEXT,
-    created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
--- Requirement #4: dedupe reviews by repository_id + pr_number + head_sha.
--- Only one non-FAILED job may be active for a given (repo, PR, sha) triple;
--- a FAILED job does not block a fresh retry job for the same sha.
-CREATE UNIQUE INDEX IF NOT EXISTS idx_jobs_active_review
-    ON jobs (repository_id, pr_number, head_sha)
-    WHERE status != 'FAILED';
-
-CREATE TABLE IF NOT EXISTS job_events (
-    id          INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id      INTEGER NOT NULL REFERENCES jobs(id),
-    from_status TEXT,
-    to_status   TEXT NOT NULL,
-    message     TEXT,
-    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_job_events_job_id ON job_events (job_id);
-
-CREATE TABLE IF NOT EXISTS findings (
-    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id                INTEGER NOT NULL REFERENCES jobs(id),
-    rule_id               TEXT NOT NULL,
-    severity              TEXT NOT NULL,
-    confidence            REAL NOT NULL,
-    path                  TEXT NOT NULL,
-    line                  INTEGER NOT NULL,
-    side                  TEXT NOT NULL DEFAULT 'RIGHT',
-    evidence              TEXT,
-    message               TEXT NOT NULL,
-    suggestion            TEXT,
-    historical_reference  TEXT,
-    fingerprint           TEXT NOT NULL UNIQUE,
-    github_comment_id     INTEGER,
-    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_findings_job_id ON findings (job_id);
-
--- History Store: human-approved past examples, retrieved (never
--- auto-learned) to enrich review context. See store/history_store.py.
-CREATE TABLE IF NOT EXISTS history_examples (
-    id              INTEGER PRIMARY KEY AUTOINCREMENT,
-    repo_full_name  TEXT NOT NULL,
-    pr_number       INTEGER,
-    rule_id         TEXT,
-    file_path       TEXT,
-    line            INTEGER,
-    code_snippet    TEXT,
-    fix_description TEXT,
-    approved_by     TEXT,
-    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
-);
-
-CREATE INDEX IF NOT EXISTS idx_history_examples_repo ON history_examples (repo_full_name);
-"""
+_engine = None
+_SessionLocal: sessionmaker | None = None
 
 
-def db_path() -> Path:
-    return Path(os.environ.get(_DB_PATH_ENV, _DEFAULT_DB_PATH))
+def utcnow_iso() -> str:
+    """Timestamp string matching the previous SQLite format (ms + Z)."""
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
 
 
-def _init_connection(conn: sqlite3.Connection) -> None:
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA foreign_keys=ON;")
-    conn.executescript(SCHEMA)
-    conn.commit()
+class Job(Base):
+    __tablename__ = "jobs"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    delivery_id = Column(String, nullable=False, unique=True)
+    repository_id = Column(Integer, nullable=False)
+    repo_full_name = Column(String, nullable=False)
+    pr_number = Column(Integer, nullable=False)
+    pr_title = Column(String)
+    pr_author = Column(String)
+    head_sha = Column(String, nullable=False)
+    action = Column(String, nullable=False)
+    status = Column(String, nullable=False, default="RECEIVED")
+    attempt_counts = Column(Text, nullable=False, default="{}")
+    github_review_id = Column(Integer)
+    fingerprint_set_hash = Column(String)
+    error = Column(Text)
+    created_at = Column(String, nullable=False, default=utcnow_iso)
+    updated_at = Column(String, nullable=False, default=utcnow_iso, onupdate=utcnow_iso)
+
+    # Requirement #4: only one non-FAILED job per (repo, PR, sha). A partial
+    # unique index (both SQLite and Postgres support WHERE) enforces it so a
+    # race between two deliveries can't create two active jobs.
+    __table_args__ = (
+        Index(
+            "idx_jobs_active_review",
+            "repository_id",
+            "pr_number",
+            "head_sha",
+            unique=True,
+            sqlite_where=text("status != 'FAILED'"),
+            postgresql_where=text("status != 'FAILED'"),
+        ),
+    )
 
 
-def get_connection() -> sqlite3.Connection:
-    """Return a thread-local, schema-initialized SQLite connection."""
-    conn = getattr(_local, "conn", None)
-    if conn is not None:
-        return conn
+class JobEvent(Base):
+    __tablename__ = "job_events"
 
-    path = db_path()
-    path.parent.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(str(path), timeout=30)
-    _init_connection(conn)
-    _local.conn = conn
-    return conn
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, nullable=False, index=True)
+    from_status = Column(String)
+    to_status = Column(String, nullable=False)
+    message = Column(Text)
+    created_at = Column(String, nullable=False, default=utcnow_iso)
 
 
-def init_db() -> Path:
-    """Idempotently create the schema. Safe to call at process startup."""
-    get_connection()
-    return db_path()
+class Finding(Base):
+    __tablename__ = "findings"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, nullable=False, index=True)
+    rule_id = Column(String, nullable=False)
+    severity = Column(String, nullable=False)
+    confidence = Column(Float, nullable=False)
+    path = Column(String, nullable=False)
+    line = Column(Integer, nullable=False)
+    side = Column(String, nullable=False, default="RIGHT")
+    evidence = Column(Text)
+    message = Column(Text, nullable=False)
+    suggestion = Column(Text)
+    historical_reference = Column(Text)
+    fingerprint = Column(String, nullable=False, unique=True)
+    github_comment_id = Column(Integer)
+    created_at = Column(String, nullable=False, default=utcnow_iso)
+
+
+class HistoryExample(Base):
+    __tablename__ = "history_examples"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    repo_full_name = Column(String, nullable=False, index=True)
+    pr_number = Column(Integer)
+    rule_id = Column(String)
+    file_path = Column(String)
+    line = Column(Integer)
+    code_snippet = Column(Text)
+    fix_description = Column(Text)
+    approved_by = Column(String)
+    created_at = Column(String, nullable=False, default=utcnow_iso)
+
+
+def _database_url() -> str:
+    url = os.environ.get("DATABASE_URL")
+    if url:
+        return url
+    path = os.environ.get(_DB_PATH_ENV, _DEFAULT_DB_PATH)
+    return f"sqlite:///{path}"
+
+
+def _is_sqlite(url: str) -> bool:
+    return url.startswith("sqlite")
+
+
+def _is_memory(url: str) -> bool:
+    return url in ("sqlite://", "sqlite:///:memory:")
+
+
+def get_engine():
+    global _engine, _SessionLocal
+    if _engine is not None:
+        return _engine
+
+    url = _database_url()
+    kwargs: dict = {"future": True}
+
+    if _is_sqlite(url):
+        kwargs["connect_args"] = {"check_same_thread": False}
+        if _is_memory(url):
+            # Share one connection across threads so the webhook thread and
+            # the eager Celery task see the same in-memory DB.
+            kwargs["poolclass"] = StaticPool
+        else:
+            # Ensure the parent dir exists for file-based SQLite.
+            db_file = url.replace("sqlite:///", "", 1)
+            Path(db_file).parent.mkdir(parents=True, exist_ok=True)
+
+    engine = create_engine(url, **kwargs)
+
+    if _is_sqlite(url):
+
+        @event.listens_for(engine, "connect")
+        def _sqlite_pragmas(dbapi_conn, _record):  # pragma: no cover - trivial
+            cur = dbapi_conn.cursor()
+            cur.execute("PRAGMA journal_mode=WAL;")
+            cur.execute("PRAGMA foreign_keys=ON;")
+            cur.close()
+
+    _engine = engine
+    _SessionLocal = sessionmaker(bind=_engine, expire_on_commit=False, future=True)
+    return _engine
+
+
+def session() -> Session:
+    """Return a new SQLAlchemy session (caller is responsible for closing)."""
+    if _SessionLocal is None:
+        get_engine()
+    assert _SessionLocal is not None
+    return _SessionLocal()
+
+
+def init_db() -> str:
+    """Idempotently create all tables. Safe to call at process startup."""
+    engine = get_engine()
+    Base.metadata.create_all(engine)
+    return _database_url()
+
+
+def reset_engine() -> None:
+    """Dispose the engine so the next init_db() re-reads DATABASE_URL /
+    PR_GUARDIAN_DB_PATH. Used by the test suite between cases."""
+    global _engine, _SessionLocal
+    if _engine is not None:
+        _engine.dispose()
+    _engine = None
+    _SessionLocal = None
 
 
 if __name__ == "__main__":
-    p = init_db()
-    print(f"Job Store schema ready at {p.resolve()}")
+    url = init_db()
+    print(f"Job Store schema ready at {url}")
