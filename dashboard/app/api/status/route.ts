@@ -96,6 +96,8 @@ export async function GET() {
         author: job.pr_author ?? "unknown",
         repo: job.repo_full_name,
         status: toUiStatus(job.status),
+        stage: job.status,
+        updatedAt: job.updated_at,
       },
       findings: findings.map((f) => ({
         file: f.path,

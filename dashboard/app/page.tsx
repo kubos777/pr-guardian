@@ -5,7 +5,9 @@ import { Button } from "@/components/ui/button";
 import { PRCard, PRStatus } from "@/components/PRCard";
 import { CommentPreview, Severity } from "@/components/CommentPreview";
 import { ThemeToggle } from "@/components/ThemeToggle";
-import { Shield, Activity, AlertTriangle, Inbox, RefreshCw } from "lucide-react";
+import { PipelineStepper, BackendStage } from "@/components/PipelineStepper";
+import { EmptyIllustration } from "@/components/EmptyIllustration";
+import { Shield, Activity, AlertTriangle, RefreshCw } from "lucide-react";
 
 interface Finding {
   file: string;
@@ -22,6 +24,8 @@ interface PRData {
   author: string;
   repo: string;
   status: PRStatus;
+  stage: BackendStage;
+  updatedAt: string;
 }
 
 interface AnalysisResult {
@@ -92,12 +96,17 @@ export default function Home() {
     <main className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-50 border-b bg-background/80 backdrop-blur-sm">
-        <div className="container mx-auto px-6 h-14 flex items-center justify-between">
-          <div className="flex items-center gap-2.5">
-            <Shield className="h-5 w-5 text-primary" />
-            <span className="font-bold text-lg tracking-tight">PR Guardian</span>
+        <div className="container mx-auto px-4 sm:px-6 h-14 flex items-center justify-between">
+          <div className="flex items-center gap-2 sm:gap-2.5 min-w-0">
+            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-lg bg-primary/10">
+              <Shield className="h-4 w-4 text-primary" />
+            </div>
+            <div className="min-w-0 leading-none">
+              <div className="font-bold text-base sm:text-lg tracking-tight truncate">PR Guardian</div>
+              <div className="text-[10px] text-muted-foreground hidden sm:block">AI code review, en vivo</div>
+            </div>
           </div>
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] text-muted-foreground font-mono hidden sm:block">
               groq/llama-3.3-70b
             </span>
@@ -107,7 +116,7 @@ export default function Home() {
       </header>
 
       {/* Content */}
-      <div className="container mx-auto px-6 py-10 max-w-2xl">
+      <div className="container mx-auto px-4 sm:px-6 py-8 sm:py-10 max-w-2xl">
         {/* Initial load */}
         {loading && (
           <div className="flex flex-col items-center gap-4 py-20">
@@ -138,12 +147,10 @@ export default function Home() {
 
         {/* No jobs yet */}
         {!loading && status?.state === "empty" && (
-          <div className="flex flex-col items-center text-center gap-6 py-16">
-            <div className="h-16 w-16 rounded-2xl bg-primary/10 flex items-center justify-center">
-              <Inbox className="h-8 w-8 text-primary" />
-            </div>
-            <div className="space-y-2">
-              <h2 className="text-2xl font-bold tracking-tight">Sin PRs analizados todavía</h2>
+          <div className="flex flex-col items-center text-center gap-6 py-12 sm:py-16 animate-in fade-in duration-500">
+            <EmptyIllustration />
+            <div className="space-y-2 px-2">
+              <h2 className="text-xl sm:text-2xl font-bold tracking-tight">Sin PRs analizados todavía</h2>
               <p className="text-muted-foreground text-sm max-w-md">
                 Abre o actualiza un Pull Request en un repo con el webhook configurado — en
                 cuanto llegue, aparecerá aquí con sus findings en vivo.
@@ -166,28 +173,36 @@ export default function Home() {
               author={result.pr.author}
               status={result.pr.status}
               repo={result.pr.repo}
+              updatedAt={result.pr.updatedAt}
             />
 
+            {/* Pipeline progress */}
+            {result.pr.status !== "idle" && (
+              <div className="rounded-lg border bg-card p-4">
+                <PipelineStepper status={result.pr.status} stage={result.pr.stage} />
+              </div>
+            )}
+
             {/* Score + Summary */}
-            <div className="grid grid-cols-5 gap-2">
+            <div className="grid grid-cols-3 sm:grid-cols-5 gap-2">
               <div className="col-span-1 flex flex-col items-center justify-center p-3 rounded-lg border bg-card">
-                <span className="text-3xl font-bold">{result.summary.score}</span>
+                <span className="text-2xl sm:text-3xl font-bold tabular-nums">{result.summary.score}</span>
                 <span className="text-[10px] text-muted-foreground uppercase">Score</span>
               </div>
               <div className="col-span-1 flex flex-col items-center justify-center p-3 rounded-lg border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-950/20">
-                <span className="text-xl font-bold text-red-600 dark:text-red-400">{result.summary.critical}</span>
+                <span className="text-xl font-bold text-red-700 dark:text-red-400 tabular-nums">{result.summary.critical}</span>
                 <span className="text-[10px] text-muted-foreground">Critical</span>
               </div>
               <div className="col-span-1 flex flex-col items-center justify-center p-3 rounded-lg border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-950/20">
-                <span className="text-xl font-bold text-orange-600 dark:text-orange-400">{result.summary.high}</span>
+                <span className="text-xl font-bold text-orange-700 dark:text-orange-400 tabular-nums">{result.summary.high}</span>
                 <span className="text-[10px] text-muted-foreground">High</span>
               </div>
               <div className="col-span-1 flex flex-col items-center justify-center p-3 rounded-lg border border-yellow-200 dark:border-yellow-900/50 bg-yellow-50 dark:bg-yellow-950/20">
-                <span className="text-xl font-bold text-yellow-600 dark:text-yellow-400">{result.summary.medium}</span>
+                <span className="text-xl font-bold text-yellow-800 dark:text-yellow-400 tabular-nums">{result.summary.medium}</span>
                 <span className="text-[10px] text-muted-foreground">Medium</span>
               </div>
               <div className="col-span-1 flex flex-col items-center justify-center p-3 rounded-lg border border-blue-200 dark:border-blue-900/50 bg-blue-50 dark:bg-blue-950/20">
-                <span className="text-xl font-bold text-blue-600 dark:text-blue-400">{result.summary.low}</span>
+                <span className="text-xl font-bold text-blue-700 dark:text-blue-400 tabular-nums">{result.summary.low}</span>
                 <span className="text-[10px] text-muted-foreground">Low</span>
               </div>
             </div>
@@ -214,15 +229,20 @@ export default function Home() {
                 </p>
               )}
               {result.findings.map((finding, idx) => (
-                <CommentPreview
+                <div
                   key={idx}
-                  file={finding.file}
-                  line={finding.line}
-                  severity={finding.severity}
-                  issue={finding.issue}
-                  suggestion={finding.suggestion}
-                  category={finding.category}
-                />
+                  className="animate-in fade-in slide-in-from-bottom-2 fill-mode-both"
+                  style={{ animationDelay: `${Math.min(idx, 8) * 70}ms`, animationDuration: "400ms" }}
+                >
+                  <CommentPreview
+                    file={finding.file}
+                    line={finding.line}
+                    severity={finding.severity}
+                    issue={finding.issue}
+                    suggestion={finding.suggestion}
+                    category={finding.category}
+                  />
+                </div>
               ))}
             </div>
 
@@ -241,6 +261,15 @@ export default function Home() {
           </div>
         )}
       </div>
+
+      <footer className="border-t py-6">
+        <div className="container mx-auto px-4 sm:px-6 max-w-2xl flex flex-col items-center gap-1 text-center">
+          <p className="text-xs text-muted-foreground">
+            Powered by <span className="font-medium text-foreground">Groq + Llama 3.3 70B</span>
+          </p>
+          <p className="text-[11px] text-muted-foreground/70">PR Guardian — AI code review autónomo</p>
+        </div>
+      </footer>
     </main>
   );
 }
