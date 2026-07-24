@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import os
 import sys
-import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -61,14 +60,12 @@ SAMPLE_FILES = [{"filename": "src/config/secrets.ts", "patch": SAMPLE_PATCH}]
 
 
 def _reset_db() -> str:
-    """Point the Job Store at a fresh temp SQLite file for this test."""
-    db._local.conn = None
-    fd, path = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    os.remove(path)  # let init_db create it fresh
-    os.environ["PR_GUARDIAN_DB_PATH"] = path
+    """Point the Job Store at a fresh in-memory SQLite DB for this test."""
+    db.reset_engine()
+    os.environ.pop("PR_GUARDIAN_DB_PATH", None)
+    os.environ["DATABASE_URL"] = "sqlite://"  # in-memory, StaticPool-shared
     db.init_db()
-    return path
+    return "sqlite://"
 
 
 class SignatureValidationTests(unittest.TestCase):
