@@ -17,9 +17,8 @@ import os
 from typing import Any
 
 import litellm
-from pydantic import BaseModel
-
 from exceptions import LLMFatalError, LLMTransientError
+from pydantic import BaseModel
 
 logger = logging.getLogger(__name__)
 
@@ -132,7 +131,7 @@ def call_llm_json(
     if cleaned.startswith("```"):
         lines = cleaned.split("\n")
         # Remove first and last lines (```json and ```)
-        lines = [l for l in lines[1:] if not l.strip() == "```"]
+        lines = [line for line in lines[1:] if line.strip() != "```"]
         cleaned = "\n".join(lines)
 
     try:

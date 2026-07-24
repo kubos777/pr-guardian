@@ -24,7 +24,6 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "agent-core", _REPO_ROOT / "github-integrati
         sys.path.insert(0, _s)
 
 from fastmcp import Client
-
 from github_client import GitHubFatalError, GitHubTransientError
 from server import mcp
 

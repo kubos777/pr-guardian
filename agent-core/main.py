@@ -20,13 +20,12 @@ import json
 import os
 from typing import Type, TypeVar
 
-from pydantic import BaseModel, ValidationError
-
 from diff_utils import DiffIndex, build_diff_text
 from exceptions import LLMTransientError
 from fingerprint import finding_fingerprint
 from llm_client import call_llm
 from prompt_loader import load_prompt
+from pydantic import BaseModel, ValidationError
 from schemas import (
     Finding,
     HistoryOutput,
