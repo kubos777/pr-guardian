@@ -96,9 +96,18 @@ start_services() {
     sleep 2
 
     # Celery Worker
+    # macOS: the default prefork pool segfaults (SIGSEGV) because fork() is not
+    # safe with the worker's asyncio/httpx MCP client. Use the solo pool locally
+    # and disable Obj-C fork safety. On Linux (Docker/prod) prefork is fine.
     log "Starting Celery Worker..."
+    WORKER_POOL="prefork"
+    WORKER_EXTRA=""
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        WORKER_POOL="solo"
+        export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+    fi
     uv run celery -A worker.celery_app worker \
-        --loglevel=info --concurrency=2 \
+        --loglevel=info --pool="$WORKER_POOL" \
         2>&1 | sed 's/^/  [worker]  /' &
     PIDS+=($!)
     sleep 2
