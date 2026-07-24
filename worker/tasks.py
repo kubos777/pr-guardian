@@ -24,13 +24,12 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "agent-core", _REPO_ROOT / "github-integrati
     if _s not in sys.path:
         sys.path.insert(0, _s)
 
-from pydantic import ValidationError
-
 import main as agent_core_main
 from diff_utils import DiffIndex
 from exceptions import LLMFatalError, LLMTransientError
 from fingerprint import embed_marker, extract_marker, fingerprint_set_hash
 from github_client import GitHubFatalError, GitHubTransientError
+from pydantic import ValidationError
 from schemas import Finding
 
 from store import context_cache, job_store

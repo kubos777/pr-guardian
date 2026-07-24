@@ -17,7 +17,6 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel, Field, field_validator
 
-
 # ---------------------------------------------------------------------------
 # Unified finding contract (REQUIREMENTS.md section 6)
 # ---------------------------------------------------------------------------

@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Optional
 
 from store.db import get_connection
 from store.stages import Stage

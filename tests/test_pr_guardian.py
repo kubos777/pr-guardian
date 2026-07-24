@@ -33,21 +33,19 @@ os.environ.setdefault("GITHUB_WEBHOOK_SECRET", "test-secret")
 os.environ.setdefault("GITHUB_TOKEN", "test-token")
 os.environ.setdefault("LLM_API_KEY", "test-key")
 
-import store.db as db
+import schemas
+import webhook_handler
+from diff_utils import DiffIndex, parse_patch
+from fingerprint import embed_marker, extract_marker, finding_fingerprint
+from github_client import GitHubFatalError, GitHubTransientError
+
 import store.context_cache as context_cache
+import store.db as db
 import store.job_store as job_store
 from store.stages import Stage
 from tests.fakes import FakeRedis
-
-import schemas
-from diff_utils import DiffIndex, parse_patch
-from fingerprint import embed_marker, extract_marker, finding_fingerprint
-
-import webhook_handler
-from github_client import GitHubFatalError, GitHubTransientError
-
-from worker.celery_app import celery_app
 from worker import tasks as pipeline_tasks
+from worker.celery_app import celery_app
 
 # Sample unified-diff hunk for one file: RIGHT (new) lines 1-4 are
 # commentable, LEFT (old) lines 1-3 are commentable.
