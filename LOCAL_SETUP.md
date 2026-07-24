@@ -248,13 +248,60 @@ ngrok te dará una URL tipo `https://abc123.ngrok-free.app`. Esa es tu webhook U
 
 ## 8. Probar el flujo completo
 
+### Opción A: PR real en GitHub
 1. Crea un PR en el repo configurado
 2. Observa los logs en las 3 terminales:
    - **Terminal 1 (Webhook):** Debe loguear el evento recibido y responder `202`
-   - **Terminal 2 (Worker):** Debe mostrar las stages ejecutándose: `FETCHING_CONTEXT → ANALYZING → VALIDATING → POSTING_TO_GITHUB → COMPLETED`
+   - **Terminal 2 (Worker):** Debe mostrar las stages: `FETCHING_CONTEXT → ANALYZING → VALIDATING → POSTING_TO_GITHUB → COMPLETED`
    - **Terminal 3 (MCP):** Debe mostrar las llamadas a GitHub API
-
 3. Revisa el PR en GitHub — deberían aparecer comentarios inline del agente
+
+### Opción B: Trigger local sin ngrok (recomendado para desarrollo)
+
+El script `scripts/e2e_trigger.py` simula una entrega de webhook de GitHub (con
+firma HMAC válida) contra el handler local, y hace polling del estado hasta que
+el job termina. No necesitas ngrok ni configurar el webhook en GitHub.
+
+```bash
+# Con los servicios levantados y el .env cargado:
+set -a && source .env && set +a
+uv run python scripts/e2e_trigger.py \
+    --repo kubos777/pr-guardian-demo \
+    --pr 1 \
+    --head-sha <SHA_REAL_DEL_PR> \
+    --repo-id <REPO_ID>
+```
+
+Salida esperada (happy path):
+```
+← 202 {"job_id": 4, "status": "RECEIVED", "dedup": "created"}
+  status = QUEUED
+  status = FETCHING_CONTEXT
+  status = ANALYZING
+  status = VALIDATING
+  status = POSTING_TO_GITHUB
+  status = COMPLETED
+=== FINAL: COMPLETED — N finding(s) ===
+```
+
+> El `--head-sha` debe ser el SHA real del head del PR (GitHub valida frescura
+> antes de publicar). Obtenlo con `git rev-parse HEAD` en la branch del demo-repo.
+
+---
+
+## ⚠️ Nota importante para macOS (worker de Celery)
+
+En macOS, el pool `prefork` de Celery **crashea con SIGSEGV** porque `fork()` no
+es seguro con el cliente asyncio/httpx del MCP. Corre el worker con el pool `solo`
+(o `threads`) y desactiva la fork-safety de Obj-C:
+
+```bash
+export OBJC_DISABLE_INITIALIZE_FORK_SAFETY=YES
+uv run celery -A worker.celery_app worker --loglevel=info --pool=solo
+```
+
+En Linux (Docker/producción) `prefork` funciona normal. El script `scripts/dev.sh`
+ya detecta el SO y aplica esto automáticamente.
 
 ---
 
@@ -265,6 +312,8 @@ ngrok te dará una URL tipo `https://abc123.ngrok-free.app`. Esa es tu webhook U
 | `redis.exceptions.ConnectionError` | Redis no está corriendo. `brew services start redis` |
 | `401 Invalid signature` en webhook | El `GITHUB_WEBHOOK_SECRET` no coincide entre `.env` y GitHub |
 | Worker no procesa tareas | Verifica que Redis está en `localhost:6379` y Celery conectó al broker |
+| Worker crashea con `SIGSEGV`/`WorkerLostError` en macOS | Usa `--pool=solo` (ver nota de macOS arriba) |
+| `401 Bad credentials` en FETCHING_CONTEXT | El `GITHUB_TOKEN` es inválido o placeholder |
 | `LLMFatalError: Fatal LLM error` | Verifica `GROQ_API_KEY` y `GEMINI_API_KEY` en `.env` |
 | `GitHubFatalError: 401` | El `GITHUB_TOKEN` no tiene los permisos necesarios |
 | ngrok dice `ERR_NGROK_*` | Crea cuenta gratis en ngrok.com y autentica con `ngrok config add-authtoken` |
