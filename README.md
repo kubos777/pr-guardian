@@ -1,6 +1,11 @@
-# 🛡️ PR Guardian
-
-[![CI](https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml/badge.svg)](https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml)
+<p align="center">
+  <img src="assets/logo.png" alt="PR Guardian" width="480" />
+</p>
+<p align="center">
+  <a href="https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml">
+    <img src="https://github.com/kubos777/pr-guardian/actions/workflows/ci.yml/badge.svg" alt="CI" />
+  </a>
+</p>
 
 > Agente AI autónomo para code review inteligente de Pull Requests en GitHub.
 
