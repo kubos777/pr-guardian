@@ -112,9 +112,11 @@ resource "aws_db_instance" "this" {
   engine                 = "postgres"
   engine_version         = "16"
   instance_class         = var.db_instance_class
-  allocated_storage      = var.db_allocated_storage
-  storage_type           = "gp3"
-  db_name                = "pr_guardian"
+  allocated_storage = var.db_allocated_storage
+  # gp2 is the storage type covered by the RDS Free Tier (20 GB). gp3 can
+  # incur charges, so we stay on gp2 for the hackathon.
+  storage_type = "gp2"
+  db_name      = "pr_guardian"
   username               = "pr_guardian"
   password               = var.db_password
   db_subnet_group_name   = aws_db_subnet_group.this.name
