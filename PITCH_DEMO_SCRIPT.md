@@ -181,47 +181,56 @@ son buenas líneas para narrar sobre el diagrama en las slides.
 
 ## 4. Respuestas Preparadas para Jueces
 
+Escritas para **decirlas en voz alta**, no para leerlas. Practícalas hasta que
+te salgan como si te las estuvieran preguntando en una conversación, no como
+si estuvieras recitando documentación.
+
 ### "¿Cómo evitan alucinaciones?"
 
-Dos capas, no una:
-1. **Prompting:** el diff y el contexto histórico se envuelven explícitamente
-   como `<untrusted_repository_content>` — el LLM recibe una instrucción clara
-   de tratarlos como datos a analizar, nunca como instrucciones a seguir.
-2. **Validación determinista post-LLM:** cada finding se valida con Pydantic
-   y se hace **cross-check contra el diff real** — si el modelo inventa un
-   archivo o una línea que no existe en el PR, ese finding se descarta antes
-   de llegar a GitHub. Esta etapa nunca se reintenta: un fallo aquí es
-   definitivo, no se le da al modelo una segunda oportunidad de "alucinar mejor".
+> "De dos formas. Primero, cuando le mandamos el diff al modelo, se lo
+> marcamos explícitamente como 'esto es información, no son instrucciones' —
+> para que no lo confunda con algo que tiene que obedecer. Pero la parte
+> importante es la segunda: después de que el modelo responde, nosotros
+> mismos revisamos que cada cosa que dice encontrar realmente exista en el
+> diff — el archivo, la línea, todo. Si el modelo se inventa algo que no
+> está ahí, simplemente lo descartamos antes de que llegue a GitHub. Y esa
+> revisión no se reintenta — si falla, falla, no le damos una segunda
+> oportunidad al modelo de 'alucinar mejor'."
 
 ### "¿Qué pasa si el LLM está caído?"
 
-Fallback automático y transparente: Groq (Llama 3.3 70B) es el proveedor
-primario; si devuelve rate-limit o un error transitorio, el sistema reintenta
-automáticamente con Gemini 2.0 Flash — sin intervención humana, vía LiteLLM
-(cambiar de proveedor es cambiar una env var, no reescribir código). Si
-*ambos* fallan, el job se marca `FAILED` con el error persistido — no se
-queda colgado ni reintenta infinitamente.
+> "Usamos Groq como proveedor principal porque es rapidísimo y gratis, pero
+> si se cae o nos rate-limitea, el sistema solo... cambia a Gemini
+> automáticamente. No hay que tocar nada — es literalmente una variable de
+> configuración distinta, no código diferente. Y si los dos fallan al mismo
+> tiempo, el job no se queda colgado para siempre — se marca como fallido con
+> el error guardado, y ya sabemos exactamente qué pasó."
 
 ### "¿Cómo escala?"
 
-Horizontal en la capa que realmente importa: el Webhook Handler responde
-`202` en milisegundos y encola el trabajo real en Celery/Redis — escalar el
-número de PRs concurrentes es agregar más workers de Celery, no reescribir
-el webhook. Los tres almacenes de datos tienen propósitos distintos y
-escalan independiente: Postgres (estado durable), Redis con TTL (caché
-efímera de solo lectura), y el History Store (retrieval curado). Cada etapa
-del pipeline es su propia tarea de Celery con su propia política de
-reintentos — reintentar `POSTING_TO_GITHUB` nunca vuelve a ejecutar
-`ANALYZING`.
+> "La parte que realmente importa escalar es el análisis, no la recepción
+> del webhook — y esa ya está separada. Cuando llega un PR, el webhook
+> responde en milisegundos y el trabajo pesado se va a una cola. Entonces
+> si mañana nos llegan 100 PRs al mismo tiempo, la respuesta no es reescribir
+> nada — es simplemente prender más workers para que jalen de esa cola. Cada
+> etapa del análisis además reintenta por su cuenta, así que si falla
+> publicar en GitHub no significa que hay que repetir el análisis del LLM
+> desde cero."
 
 ### "¿Por qué no usar Copilot/CodeRabbit directamente?"
 
-Herramientas genéricas revisan **sintaxis**; PR Guardian revisa **contexto**:
-recupera ejemplos de tus propios PRs aprobados y tus convenciones implícitas
-como retrieval determinista sobre historial curado — no reglas estáticas
-genéricas que son iguales para cualquier repo. (Importante ser honestos: el
-MVP no reentrena ni actualiza modelos automáticamente — es retrieval, no
-aprendizaje continuo. No prometer más de lo que el sistema hace.)
+> "Porque esas herramientas revisan sintaxis genérica — las mismas reglas
+> para cualquier repo del mundo. Nosotros en cambio buscamos en tus propios
+> PRs aprobados y tu propio historial antes de opinar, entonces el feedback
+> que te da está basado en cómo *tu equipo* ya decidió resolver ese tipo de
+> problema antes, no en una regla de estilo universal. Y para ser honestos —
+> esto no es que el sistema 'aprenda solo' con el tiempo, es retrieval sobre
+> historial curado. No queremos prometer más de lo que realmente hace."
+
+> ⚠️ **Nota:** no menciones una URL pública de AWS en el pitch a menos que
+> esté confirmado funcionando ese mismo día — el deploy (issue #15) sigue en
+> progreso y no es parte de lo que se demuestra aquí (ver la sección de
+> "Otras cosas a revisar" más abajo).
 
 ---
 
@@ -247,3 +256,38 @@ No puedo grabar por ti, pero esto es lo que importa tener listo:
   aparecen, si van muy rápido para leerlos en voz).
 - Exporta en MP4, verifica el límite de tiempo y tamaño exacto que pida las
   bases del hackathon antes de cortar a "menos de 5 min" a ciegas.
+
+---
+
+## 7. Otras Cosas a Revisar (no son parte del checklist de este issue)
+
+### AWS (issue #15) — no es una dependencia de este demo
+
+El deploy a AWS es un issue **separado**, asignado a kubos777, con criterio de
+éxito propio: que los jueces puedan abrir un PR en una URL pública. Ya existe
+una rama `ft/terraform-aws` con 3 commits (módulo de Terraform para EC2 + RDS,
+documentación de costos) — no está mergeada ni desplegada todavía, pero no
+está en cero.
+
+**No dependen de que esa rama termine.** El demo de este script corre 100%
+local (Docker Compose + `localhost:3000`) — no necesita ninguna URL pública
+para funcionar en la grabación ni en un demo en vivo desde tu laptop. AWS
+sería un plus si está listo (los jueces podrían probarlo ellos mismos después
+de la presentación), pero no es requisito para nada de lo que está en este
+documento.
+
+### Dos bugs reales encontrados hoy que siguen sin arreglarse en código
+
+Documentados como advertencias en la sección 2 de este archivo (con
+workaround para grabar), pero vale la pena que alguien los arregle de
+verdad después del hackathon, no solo los esquive el día de la demo:
+
+1. **Worker con conexión obsoleta tras idle** — el pool de SQLAlchemy se
+   establece antes del fork de Celery; el primer job después de un rato
+   idle se pierde silenciosamente. Fix real: recrear el engine en un
+   signal `worker_process_init` de Celery, o usar `NullPool`.
+2. **Gemini free tier con `limit: 0`** — el fallback a Gemini no funcionó
+   en el ensayo. Vale la pena confirmar en Google AI Studio que el free
+   tier esté realmente habilitado para esa API key antes del día de la
+   entrega — si Groq se satura durante el demo real (con jueces mirando),
+   ahora mismo no hay red de seguridad.
