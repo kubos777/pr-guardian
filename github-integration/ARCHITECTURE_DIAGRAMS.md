@@ -1,6 +1,6 @@
 # 🛡️ PR Guardian - Documentación de Arquitectura y Diagramas
 
-Este documento explica los diagramas técnicos del proyecto PR Guardian, actualizados para reflejar el pipeline de revisión **asíncrono y durable** implementado con FastAPI + Celery/Redis + SQLite. Úsalos como referencia durante el desarrollo y para preparar el pitch técnico ante los jueces.
+Este documento explica los diagramas técnicos del proyecto PR Guardian, actualizados para reflejar el pipeline de revisión **asíncrono y durable** implementado con FastAPI + Celery/Redis + Postgres (SQLite en local sin `DATABASE_URL`), y Groq + Llama 3.3 70B como LLM primario (Gemini 2.0 Flash como fallback vía LiteLLM). Úsalos como referencia durante el desarrollo y para preparar el pitch técnico ante los jueces.
 
 ---
 
@@ -21,7 +21,7 @@ sequenceDiagram
     participant MCP as MCP Server
     participant CC as Context Cache (Redis, TTL)
     participant HS as History Store (SQLite)
-    participant LLM as LLM (Claude)
+    participant LLM as LLM (Groq Llama 3.3 70B, fallback Gemini 2.0 Flash)
 
     Dev->>GH: Push / open Pull Request
     GH->>WH: POST /webhook (pull_request.opened|synchronize)
@@ -98,13 +98,13 @@ graph TB
         MCP["MCP Server<br/>github-integration/server.py"]
         AGENT["Agent Core<br/>agent-core/main.py"]
 
-        JOBSTORE[("Job Store (SQLite)<br/>jobs, job_events, findings<br/>durable execution state")]
+        JOBSTORE[("Job Store (Postgres/SQLite)<br/>jobs, job_events, findings<br/>durable execution state")]
         CACHE[("Context Cache (Redis, TTL)<br/>ephemeral API/config data")]
         HISTORY[("History Store (SQLite)<br/>history_examples<br/>retrieves approved examples")]
     end
 
     subgraph "External Services"
-        LLM[LLM API - Claude]
+        LLM[LLM API - Groq Llama 3.3 70B + Gemini fallback]
         DASH[Dashboard - Next.js]
     end
 
