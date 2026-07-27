@@ -19,6 +19,7 @@ for _p in (_REPO_ROOT, _REPO_ROOT / "agent-core", _REPO_ROOT / "github-integrati
         sys.path.insert(0, _s)
 
 from celery import Celery
+from celery.signals import worker_process_init
 
 BROKER_URL = os.environ.get("CELERY_BROKER_URL", os.environ.get("REDIS_URL", "redis://localhost:6379/0"))
 
@@ -30,3 +31,17 @@ celery_app.conf.update(
     worker_prefetch_multiplier=1,
     task_default_max_retries=int(os.environ.get("MAX_RETRY_ATTEMPTS", "3")),
 )
+
+
+@worker_process_init.connect
+def _reset_db_engine_after_fork(**_kwargs) -> None:
+    """Dispose the SQLAlchemy engine inherited across the prefork boundary.
+
+    The engine/connection pool is created in the parent process; a forked
+    worker child that reuses those inherited connections corrupts them,
+    causing the first job to silently hang in QUEUED. Disposing here forces
+    each worker process to lazily open its own fresh connections.
+    """
+    from store import db
+
+    db.reset_engine()
