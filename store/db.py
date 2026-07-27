@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 from sqlalchemy import (
+    BigInteger,
     Column,
     Float,
     Index,
@@ -53,7 +54,8 @@ class Job(Base):
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     delivery_id = Column(String, nullable=False, unique=True)
-    repository_id = Column(Integer, nullable=False)
+    # GitHub IDs are large — must be 64-bit (BigInteger) or Postgres INT4 overflows.
+    repository_id = Column(BigInteger, nullable=False)
     repo_full_name = Column(String, nullable=False)
     pr_number = Column(Integer, nullable=False)
     pr_title = Column(String)
@@ -62,7 +64,7 @@ class Job(Base):
     action = Column(String, nullable=False)
     status = Column(String, nullable=False, default="RECEIVED")
     attempt_counts = Column(Text, nullable=False, default="{}")
-    github_review_id = Column(Integer)
+    github_review_id = Column(BigInteger)
     fingerprint_set_hash = Column(String)
     error = Column(Text)
     created_at = Column(String, nullable=False, default=utcnow_iso)
@@ -111,7 +113,7 @@ class Finding(Base):
     suggestion = Column(Text)
     historical_reference = Column(Text)
     fingerprint = Column(String, nullable=False, unique=True)
-    github_comment_id = Column(Integer)
+    github_comment_id = Column(BigInteger)
     created_at = Column(String, nullable=False, default=utcnow_iso)
 
 
