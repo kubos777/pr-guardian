@@ -121,10 +121,12 @@ resource "aws_db_instance" "this" {
   password               = var.db_password
   db_subnet_group_name   = aws_db_subnet_group.this.name
   vpc_security_group_ids = [aws_security_group.rds.id]
-  publicly_accessible    = false
-  skip_final_snapshot    = true
-  backup_retention_period = 7
-  tags                   = local.tags
+  publicly_accessible = false
+  skip_final_snapshot = true
+  # Free Tier no permite retención de backups > 0. Para la demo no hacen falta;
+  # en una cuenta de pago puedes subirlo (p.ej. 7) para backups automáticos.
+  backup_retention_period = 0
+  tags                    = local.tags
 }
 
 # ---------------------------------------------------------------------------

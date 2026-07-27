@@ -27,6 +27,8 @@ curl -fsSL -o /usr/bin/caddy "https://caddyserver.com/api/download?os=linux&arch
 chmod +x /usr/bin/caddy
 id caddy &>/dev/null || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy
 mkdir -p /var/lib/caddy /etc/caddy
+# Caddy (User=caddy) needs to own its home to write cert/ACME storage.
+chown -R caddy:caddy /var/lib/caddy
 
 # ---------------------------------------------------------------------------
 # 2. Clone the repo
@@ -109,24 +111,10 @@ RestartSec=3
 WantedBy=multi-user.target
 UNIT
 
-cat > /etc/systemd/system/pr-guardian-mcp.service <<'UNIT'
-[Unit]
-Description=PR Guardian MCP Server
-After=network-online.target redis6.service
-Wants=network-online.target
-
-[Service]
-User=ec2-user
-WorkingDirectory=/opt/pr-guardian
-EnvironmentFile=/opt/pr-guardian/.env
-Environment=HOME=/home/ec2-user
-ExecStart=/usr/local/bin/uv run python github-integration/server.py
-Restart=always
-RestartSec=3
-
-[Install]
-WantedBy=multi-user.target
-UNIT
+# NOTE: no standalone MCP service. The Celery worker talks to the MCP tools
+# via FastMCP's in-memory transport (Client(mcp) in worker/mcp_client.py),
+# so running server.py separately (stdio transport) is unnecessary and would
+# just exit/crash-loop.
 
 cat > /etc/systemd/system/pr-guardian-dashboard.service <<'UNIT'
 [Unit]
@@ -180,6 +168,7 @@ Wants=network-online.target
 [Service]
 User=caddy
 Group=caddy
+Environment=HOME=/var/lib/caddy
 ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
 ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
 Restart=always
@@ -194,6 +183,6 @@ UNIT
 # 7. Start everything
 # ---------------------------------------------------------------------------
 systemctl daemon-reload
-systemctl enable --now pr-guardian-webhook pr-guardian-worker pr-guardian-mcp pr-guardian-dashboard caddy
+systemctl enable --now pr-guardian-webhook pr-guardian-worker pr-guardian-dashboard caddy
 
 echo "PR Guardian bootstrap complete. Public site: https://$${SITE_ADDR}"

@@ -11,9 +11,9 @@ variable "project_name" {
 }
 
 variable "instance_type" {
-  description = "EC2 instance type (t2.micro is Free Tier)."
+  description = "EC2 instance type (t3.micro is Free Tier on the current plan)."
   type        = string
-  default     = "t2.micro"
+  default     = "t3.micro"
 }
 
 variable "db_instance_class" {
