@@ -1,0 +1,188 @@
+#!/usr/bin/env bash
+# PR Guardian - EC2 bootstrap (Amazon Linux 2023).
+# Terraform interpolations use $${...} escaping for literal shell variables.
+# No `set -x`: it would echo the injected secrets into the cloud-init log.
+set -euo pipefail
+
+APP_DIR=/opt/pr-guardian
+APP_USER=ec2-user
+
+# ---------------------------------------------------------------------------
+# 1. System packages
+# ---------------------------------------------------------------------------
+dnf update -y
+dnf install -y git redis6 gcc
+
+systemctl enable --now redis6
+
+# Node 20 (NodeSource) -> /usr/bin/node, /usr/bin/npm
+curl -fsSL https://rpm.nodesource.com/setup_20.x | bash -
+dnf install -y nodejs
+
+# uv, installed system-wide so systemd units can find it
+curl -LsSf https://astral.sh/uv/install.sh | env UV_INSTALL_DIR=/usr/local/bin sh
+
+# Caddy static binary + systemd unit
+curl -fsSL -o /usr/bin/caddy "https://caddyserver.com/api/download?os=linux&arch=amd64"
+chmod +x /usr/bin/caddy
+id caddy &>/dev/null || useradd --system --home /var/lib/caddy --shell /usr/sbin/nologin caddy
+mkdir -p /var/lib/caddy /etc/caddy
+# Caddy (User=caddy) needs to own its home to write cert/ACME storage.
+chown -R caddy:caddy /var/lib/caddy
+
+# ---------------------------------------------------------------------------
+# 2. Clone the repo
+# ---------------------------------------------------------------------------
+git clone --branch "${repo_branch}" "${repo_url}" "$${APP_DIR}"
+chown -R $${APP_USER}:$${APP_USER} "$${APP_DIR}"
+
+# ---------------------------------------------------------------------------
+# 3. .env (production) — consumed by the systemd services below
+# ---------------------------------------------------------------------------
+cat > "$${APP_DIR}/.env" <<'ENVFILE'
+GITHUB_WEBHOOK_SECRET=${github_webhook_secret}
+GITHUB_TOKEN=${github_token}
+GITHUB_API_URL=https://api.github.com
+GROQ_API_KEY=${groq_api_key}
+GEMINI_API_KEY=${gemini_api_key}
+LLM_MODEL=groq/llama-3.3-70b-versatile
+LLM_FALLBACK_MODEL=gemini/gemini-2.0-flash
+LLM_TEMPERATURE=0.2
+LLM_MAX_TOKENS=1500
+REDIS_URL=redis://localhost:6379/0
+CELERY_BROKER_URL=redis://localhost:6379/0
+CONTEXT_CACHE_TTL_SECONDS=300
+DATABASE_URL=${database_url}
+MAX_RETRY_ATTEMPTS=3
+RETRY_BACKOFF_MAX_SECONDS=30
+WEBHOOK_HOST=0.0.0.0
+WEBHOOK_PORT=8000
+MCP_SERVER_PORT=8080
+WEBHOOK_API_URL=http://127.0.0.1:8000
+NODE_ENV=production
+ENVFILE
+chown $${APP_USER}:$${APP_USER} "$${APP_DIR}/.env"
+chmod 600 "$${APP_DIR}/.env"
+
+# ---------------------------------------------------------------------------
+# 4. Install dependencies (as ec2-user) + build dashboard
+# ---------------------------------------------------------------------------
+sudo -u $${APP_USER} bash -lc "cd $${APP_DIR} && /usr/local/bin/uv sync"
+sudo -u $${APP_USER} bash -lc "cd $${APP_DIR}/dashboard && npm ci && npm run build"
+
+# ---------------------------------------------------------------------------
+# 5. systemd services
+# ---------------------------------------------------------------------------
+cat > /etc/systemd/system/pr-guardian-webhook.service <<'UNIT'
+[Unit]
+Description=PR Guardian Webhook Handler
+After=network-online.target redis6.service
+Wants=network-online.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/opt/pr-guardian
+EnvironmentFile=/opt/pr-guardian/.env
+Environment=HOME=/home/ec2-user
+ExecStart=/usr/local/bin/uv run uvicorn webhook_handler:app --host 0.0.0.0 --port 8000 --app-dir github-integration
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+cat > /etc/systemd/system/pr-guardian-worker.service <<'UNIT'
+[Unit]
+Description=PR Guardian Celery Worker
+After=network-online.target redis6.service
+Wants=network-online.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/opt/pr-guardian
+EnvironmentFile=/opt/pr-guardian/.env
+Environment=HOME=/home/ec2-user
+ExecStart=/usr/local/bin/uv run celery -A worker.celery_app worker --loglevel=info
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# NOTE: no standalone MCP service. The Celery worker talks to the MCP tools
+# via FastMCP's in-memory transport (Client(mcp) in worker/mcp_client.py),
+# so running server.py separately (stdio transport) is unnecessary and would
+# just exit/crash-loop.
+
+cat > /etc/systemd/system/pr-guardian-dashboard.service <<'UNIT'
+[Unit]
+Description=PR Guardian Dashboard (Next.js)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=ec2-user
+WorkingDirectory=/opt/pr-guardian/dashboard
+EnvironmentFile=/opt/pr-guardian/.env
+Environment=HOME=/home/ec2-user
+ExecStart=/usr/bin/npm run start -- -p 3000
+Restart=always
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ---------------------------------------------------------------------------
+# 6. Caddy reverse proxy with automatic HTTPS
+#    Site address = custom domain, or <public-ip>.nip.io (real LE cert, no
+#    domain purchase). /webhook* -> backend, everything else -> dashboard.
+# ---------------------------------------------------------------------------
+PUBLIC_IP=$(curl -fsS -H "X-aws-ec2-metadata-token: $(curl -fsS -X PUT http://169.254.169.254/latest/api/token -H 'X-aws-ec2-metadata-token-ttl-seconds: 60')" http://169.254.169.254/latest/meta-data/public-ipv4)
+DOMAIN="${domain}"
+if [ -n "$${DOMAIN}" ]; then
+  SITE_ADDR="$${DOMAIN}"
+else
+  SITE_ADDR="$${PUBLIC_IP}.nip.io"
+fi
+
+cat > /etc/caddy/Caddyfile <<CADDY
+$${SITE_ADDR} {
+    handle /webhook* {
+        reverse_proxy 127.0.0.1:8000
+    }
+    handle {
+        reverse_proxy 127.0.0.1:3000
+    }
+}
+CADDY
+
+cat > /etc/systemd/system/caddy.service <<'UNIT'
+[Unit]
+Description=Caddy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+Environment=HOME=/var/lib/caddy
+ExecStart=/usr/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+Restart=always
+RestartSec=3
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+[Install]
+WantedBy=multi-user.target
+UNIT
+
+# ---------------------------------------------------------------------------
+# 7. Start everything
+# ---------------------------------------------------------------------------
+systemctl daemon-reload
+systemctl enable --now pr-guardian-webhook pr-guardian-worker pr-guardian-dashboard caddy
+
+echo "PR Guardian bootstrap complete. Public site: https://$${SITE_ADDR}"
