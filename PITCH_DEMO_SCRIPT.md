@@ -63,17 +63,11 @@ curl http://localhost:3000/api/status
 # el paso 3 de la demo va a crear uno nuevo de todas formas.
 ```
 
-> ⚠️ **Bug real encontrado en ensayo (2026-07-26), confirmado y con workaround:**
-> si el worker lleva rato corriendo sin procesar nada, el primer job que le
-> llega puede quedarse pegado en `QUEUED` para siempre — el task se marca
-> "succeeded" en los logs de Celery pero no hizo nada (probablemente el pool
-> de conexión de SQLAlemy a Postgres se establece antes del fork de Celery,
-> quedando en un estado inconsistente en el proceso hijo). **Reiniciar el
-> worker (`docker compose restart worker`) justo antes de grabar lo arregla.**
-> Vale la pena reportarlo al equipo para un fix real (ej. recrear el engine
-> en un signal `worker_process_init` de Celery) — esto no es parte de este
-> ticket, pero si no se soluciona puede arruinar la demo en vivo el día de
-> la entrega.
+> ✅ **Bug del worker tras idle — YA ARREGLADO:** antes, si el worker llevaba
+> rato idle, el primer job se quedaba pegado en `QUEUED` (el pool de SQLAlchemy
+> se establecía antes del fork de Celery). Se corrigió con un signal
+> `worker_process_init` en `worker/celery_app.py` que recrea el engine tras el
+> fork. Ya no necesitas reiniciar el worker antes de grabar.
 >
 > ⚠️ **Riesgo de rate limit — probar UNA vez, no varias, antes de grabar:**
 > en el ensayo de hoy, Groq devolvió resultados reales (2 de 3 prompts)
@@ -227,10 +221,9 @@ si estuvieras recitando documentación.
 > esto no es que el sistema 'aprenda solo' con el tiempo, es retrieval sobre
 > historial curado. No queremos prometer más de lo que realmente hace."
 
-> ⚠️ **Nota:** no menciones una URL pública de AWS en el pitch a menos que
-> esté confirmado funcionando ese mismo día — el deploy (issue #15) sigue en
-> progreso y no es parte de lo que se demuestra aquí (ver la sección de
-> "Otras cosas a revisar" más abajo).
+> ✅ **Nota:** el deploy a AWS ya está vivo en https://54.90.206.50.nip.io
+> (HTTPS real). Puedes invitar a los jueces a abrirlo ellos mismos. Verifica
+> que siga arriba el día de la entrega (ver sección 7).
 
 ---
 
@@ -261,20 +254,24 @@ No puedo grabar por ti, pero esto es lo que importa tener listo:
 
 ## 7. Otras Cosas a Revisar (no son parte del checklist de este issue)
 
-### AWS (issue #15) — no es una dependencia de este demo
+### AWS (issue #15) — ✅ DESPLEGADO Y VIVO
 
-El deploy a AWS es un issue **separado**, asignado a kubos777, con criterio de
-éxito propio: que los jueces puedan abrir un PR en una URL pública. Ya existe
-una rama `ft/terraform-aws` con 3 commits (módulo de Terraform para EC2 + RDS,
-documentación de costos) — no está mergeada ni desplegada todavía, pero no
-está en cero.
+El deploy a AWS **ya está funcionando en producción** con HTTPS real:
 
-**No dependen de que esa rama termine.** El demo de este script corre 100%
-local (Docker Compose + `localhost:3000`) — no necesita ninguna URL pública
-para funcionar en la grabación ni en un demo en vivo desde tu laptop. AWS
-sería un plus si está listo (los jueces podrían probarlo ellos mismos después
-de la presentación), pero no es requisito para nada de lo que está en este
-documento.
+- **Dashboard público:** https://54.90.206.50.nip.io
+- **Webhook:** https://54.90.206.50.nip.io/webhook
+- Infra levantada con Terraform (`terraform/`): EC2 t3.micro + RDS PostgreSQL,
+  todo en Free Tier, HTTPS vía Let's Encrypt (`nip.io`).
+
+**Opción para el pitch:** puedes demostrar contra la URL pública en vivo (los
+jueces pueden abrirla ellos mismos), o correr el demo 100% local (Docker
+Compose + `localhost:3000`) — ambos funcionan. Recomendación: **demo local para
+grabar** (más controlado, sin depender de la red del evento) y **mencionar la
+URL pública como prueba de que está desplegado de verdad** para que los jueces
+la prueben después.
+
+> Recuerda: la instancia corre 7 días para la demo. Al terminar, `terraform
+> destroy` para volver a $0.
 
 ### Dos bugs reales encontrados hoy que siguen sin arreglarse en código
 
@@ -282,10 +279,10 @@ Documentados como advertencias en la sección 2 de este archivo (con
 workaround para grabar), pero vale la pena que alguien los arregle de
 verdad después del hackathon, no solo los esquive el día de la demo:
 
-1. **Worker con conexión obsoleta tras idle** — el pool de SQLAlchemy se
-   establece antes del fork de Celery; el primer job después de un rato
-   idle se pierde silenciosamente. Fix real: recrear el engine en un
-   signal `worker_process_init` de Celery, o usar `NullPool`.
+1. **Worker con conexión obsoleta tras idle** — ✅ **ARREGLADO**. Se agregó un
+   signal `worker_process_init` en `worker/celery_app.py` que hace
+   `db.reset_engine()` tras el fork, para que cada worker abra sus propias
+   conexiones frescas. Ya no hace falta reiniciar el worker antes de demostrar.
 2. **Gemini free tier con `limit: 0`** — el fallback a Gemini no funcionó
    en el ensayo. Vale la pena confirmar en Google AI Studio que el free
    tier esté realmente habilitado para esa API key antes del día de la
