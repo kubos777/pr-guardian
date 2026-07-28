@@ -1,0 +1,1 @@
+Este es el dashboard de PR Guardian, corriendo en Amazon Web Services con HTTPS. Ahora mismo está vacío: no hay ningún análisis en curso. En cuanto GitHub nos avise que llegó un Pull Request, va a aparecer aquí solo, sin que nadie tenga que apretar nada.
