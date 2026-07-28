@@ -1,0 +1,1 @@
+Los equipos de desarrollo pierden entre quince y veinte horas por semana en code reviews repetitivos. Los juniors cometen los mismos errores una y otra vez, y los seniors se queman revisando estilo en lugar de arquitectura. Presentamos PR Guardian: un agente de inteligencia artificial que revisa tus Pull Requests de forma autónoma, en menos de treinta segundos.

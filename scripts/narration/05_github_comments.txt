@@ -1,0 +1,1 @@
+Y esto es lo que ve el desarrollador: los comentarios publicados directamente en GitHub, inline, en la línea exacta del problema. Nunca tuvo que salir de su flujo de trabajo. Si vuelve a subir cambios, PR Guardian analiza la nueva versión, y gracias a una huella digital por hallazgo, no repite comentarios que ya publicó.
