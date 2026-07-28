@@ -50,8 +50,8 @@ BASE_URL = os.environ.get("BASE_URL", "https://54.90.206.50.nip.io").rstrip("/")
 WEBHOOK_URL = os.environ.get("WEBHOOK_URL", BASE_URL).rstrip("/")
 SECRET = os.environ.get("GITHUB_WEBHOOK_SECRET", "")
 REPO = os.environ.get("DEMO_REPO", "kubos777/pr-guardian-demo")
-PR = int(os.environ.get("DEMO_PR", "1"))
-HEAD_SHA = os.environ.get("DEMO_HEAD_SHA", "be616779374e8553c61472628fca098dd2b15e45")
+PR = int(os.environ.get("DEMO_PR", "2"))
+HEAD_SHA = os.environ.get("DEMO_HEAD_SHA", "4a2ce1ebd7559a47e3686dbf9a2903c7b516590d")
 REPO_ID = int(os.environ.get("DEMO_REPO_ID", "1310435951"))
 
 PR_URL = f"https://github.com/{REPO}/pull/{PR}"
@@ -98,13 +98,27 @@ def pause(page, seconds: float, msg: str) -> None:
     page.wait_for_timeout(int(seconds * 1000))
 
 
+def smooth_scroll(page, total: int = 1600, step: int = 120, delay_ms: int = 220) -> None:
+    """Scroll down gradually (human-like), then a little back up."""
+    scrolled = 0
+    while scrolled < total:
+        page.mouse.wheel(0, step)
+        page.wait_for_timeout(delay_ms)
+        scrolled += step
+    page.wait_for_timeout(600)
+    # small scroll back up so it doesn't feel abrupt
+    for _ in range(4):
+        page.mouse.wheel(0, -step)
+        page.wait_for_timeout(delay_ms)
+
+
 def main() -> None:
     if not SECRET:
         raise SystemExit("Set GITHUB_WEBHOOK_SECRET")
 
     with sync_playwright() as p:
-        # slow_mo paces each action so it's visible on the recording.
-        browser = p.chromium.launch(headless=HEADLESS, slow_mo=0 if HEADLESS else 600)
+        # slow_mo paces each action so it's visible on the recording (higher = more human).
+        browser = p.chromium.launch(headless=HEADLESS, slow_mo=0 if HEADLESS else 900)
         # Fixed 1440x900 viewport = consistent frame for recording (more
         # reliable on macOS than --start-maximized).
         page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
@@ -113,12 +127,14 @@ def main() -> None:
         print("1) Abriendo el PR con bugs en GitHub...", flush=True)
         page.goto(PR_URL, wait_until="domcontentloaded", timeout=45000)
         page.bring_to_front()
-        pause(page, 6, "Recorre el diff: secret hardcodeado, N+1, any, etc.")
+        pause(page, 4, "El PR con los bugs sembrados")
+        smooth_scroll(page, total=1400, step=110, delay_ms=240)
+        pause(page, 2, "Recorriste el diff: secret, N+1, any, etc.")
 
         # 2. Open the dashboard
         print("2) Abriendo el dashboard...", flush=True)
         page.goto(BASE_URL, wait_until="domcontentloaded", timeout=45000)
-        pause(page, 4, "Estado actual del dashboard")
+        pause(page, 5, "Estado actual del dashboard")
 
         # 3. Trigger the pipeline
         print("3) Disparando el webhook (pipeline real)...", flush=True)
@@ -133,15 +149,21 @@ def main() -> None:
             print("   findings visibles", flush=True)
         except Exception:
             print("   (no apareció el finding a tiempo; sigue de todas formas)", flush=True)
-        pause(page, 5, "Muestra el score, el stepper y los findings")
+        pause(page, 3, "El pipeline corrió: score, stepper y findings")
+        # Scroll slowly through the findings so each one is readable on camera.
+        smooth_scroll(page, total=1600, step=100, delay_ms=260)
+        pause(page, 2, "Recorriste todos los findings")
 
         # 5. Show the inline comments on GitHub
         print("5) Abriendo los comentarios inline en GitHub...", flush=True)
         page.goto(REVIEWS_URL, wait_until="domcontentloaded", timeout=45000)
-        pause(page, 8, "Scroll por los comentarios inline de PR Guardian")
+        pause(page, 4, "Pestaña Files changed con los comentarios inline")
+        # Scroll through the diff so the inline PR Guardian comments are visible.
+        smooth_scroll(page, total=2200, step=100, delay_ms=280)
+        pause(page, 2, "Recorriste los comentarios inline de PR Guardian")
 
         print("\nDemo terminada. Cierra el browser cuando termines de grabar.", flush=True)
-        pause(page, 8, "Ventana abierta para el cierre de la grabación")
+        pause(page, 6, "Ventana abierta para el cierre de la grabación")
         browser.close()
 
 
