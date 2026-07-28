@@ -90,8 +90,11 @@ def fire_webhook() -> None:
         print("  webhook ->", r.status, r.read().decode())
 
 
+HEADLESS = os.environ.get("HEADLESS", "0") == "1"
+
+
 def pause(page, seconds: float, msg: str) -> None:
-    print(f"  · {msg}")
+    print(f"  · {msg}", flush=True)
     page.wait_for_timeout(int(seconds * 1000))
 
 
@@ -100,40 +103,44 @@ def main() -> None:
         raise SystemExit("Set GITHUB_WEBHOOK_SECRET")
 
     with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False, args=["--start-maximized"])
-        page = browser.new_context(no_viewport=True).new_page()
+        # slow_mo paces each action so it's visible on the recording.
+        browser = p.chromium.launch(headless=HEADLESS, slow_mo=0 if HEADLESS else 600)
+        # Fixed 1440x900 viewport = consistent frame for recording (more
+        # reliable on macOS than --start-maximized).
+        page = browser.new_context(viewport={"width": 1440, "height": 900}).new_page()
 
         # 1. Show the PR with intentional bugs
-        print("1) Abriendo el PR con bugs en GitHub...")
-        page.goto(PR_URL, wait_until="domcontentloaded")
+        print("1) Abriendo el PR con bugs en GitHub...", flush=True)
+        page.goto(PR_URL, wait_until="domcontentloaded", timeout=45000)
+        page.bring_to_front()
         pause(page, 6, "Recorre el diff: secret hardcodeado, N+1, any, etc.")
 
         # 2. Open the dashboard
-        print("2) Abriendo el dashboard...")
-        page.goto(BASE_URL, wait_until="domcontentloaded")
+        print("2) Abriendo el dashboard...", flush=True)
+        page.goto(BASE_URL, wait_until="domcontentloaded", timeout=45000)
         pause(page, 4, "Estado actual del dashboard")
 
         # 3. Trigger the pipeline
-        print("3) Disparando el webhook (pipeline real)...")
+        print("3) Disparando el webhook (pipeline real)...", flush=True)
         fire_webhook()
 
         # 4. Watch it go live — reload once then let the dashboard poll
-        print("4) Esperando que el dashboard muestre el análisis en vivo...")
-        page.reload(wait_until="domcontentloaded")
+        print("4) Esperando que el dashboard muestre el análisis en vivo...", flush=True)
+        page.reload(wait_until="domcontentloaded", timeout=45000)
         try:
             # Findings render as file:line code chips; wait for the critical one.
             page.wait_for_selector("text=Hardcoded Secret", timeout=60000)
-            print("   findings visibles")
+            print("   findings visibles", flush=True)
         except Exception:
-            print("   (no apareció el finding a tiempo; sigue de todas formas)")
+            print("   (no apareció el finding a tiempo; sigue de todas formas)", flush=True)
         pause(page, 5, "Muestra el score, el stepper y los findings")
 
         # 5. Show the inline comments on GitHub
-        print("5) Abriendo los comentarios inline en GitHub...")
-        page.goto(REVIEWS_URL, wait_until="domcontentloaded")
+        print("5) Abriendo los comentarios inline en GitHub...", flush=True)
+        page.goto(REVIEWS_URL, wait_until="domcontentloaded", timeout=45000)
         pause(page, 8, "Scroll por los comentarios inline de PR Guardian")
 
-        print("\nDemo terminada. Cierra el browser cuando termines de grabar.")
+        print("\nDemo terminada. Cierra el browser cuando termines de grabar.", flush=True)
         pause(page, 8, "Ventana abierta para el cierre de la grabación")
         browser.close()
 
