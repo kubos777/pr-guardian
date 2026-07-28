@@ -11,6 +11,14 @@
 
 PR Guardian no es un linter genérico. Es un reviewer que entiende **tu código**, **tu estilo** y **tu historial**. Analiza contexto real del repositorio, detecta patrones críticos y publica comentarios inline directamente en el PR — todo en menos de 30 segundos.
 
+<p align="center">
+  🎥 <a href="assets/PRGUARDIAN.mp4"><strong>Ver video demo</strong></a>
+  &nbsp;·&nbsp;
+  🌐 <a href="https://54.90.206.50.nip.io"><strong>Demo en vivo</strong></a>
+  &nbsp;·&nbsp;
+  🔍 <a href="https://github.com/kubos777/pr-guardian-demo/pull/4"><strong>PR analizado</strong></a>
+</p>
+
 ---
 
 ## ¿Por qué PR Guardian?
